@@ -23,9 +23,12 @@ import {
   RemoveFormatting,
   Heading1,
   Heading2,
-  Heading3
+  Heading3,
+  Variable
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { VariableMenu } from "@/components/editor/variable-menu"
+import { VariableNode } from "@/components/editor/variable-node"
 
 interface RichTextEditorProps {
   value: string
@@ -51,6 +54,20 @@ const MenuBar = ({ editor }: { editor: ReturnType<typeof useEditor> | null }) =>
 
   return (
     <div className="flex flex-wrap items-center gap-1 p-2 bg-card border-b border-border rounded-t-lg">
+      {/* Variables */}
+      <div className="flex items-center gap-1 pr-2 border-r border-border">
+        <ToolbarButton
+          onClick={() => {
+            // Insert variable trigger
+            editor.chain().focus().insertContent('@').run()
+          }}
+          active={false}
+          title="Insert Variable (type @ in editor)"
+        >
+          <Variable className="h-4 w-4" />
+        </ToolbarButton>
+      </div>
+
       {/* Headings */}
       <div className="flex items-center gap-1 pr-2 border-r border-border">
         <ToolbarButton
@@ -209,6 +226,11 @@ export function RichTextEditor({
   className,
   minHeight = "300px"
 }: RichTextEditorProps) {
+  const editorRef = React.useRef<ReturnType<typeof useEditor> | null>(null)
+  const [menuPosition, setMenuPosition] = React.useState<{ x: number; y: number } | null>(null)
+  const [searchQuery, setSearchQuery] = React.useState("")
+  const [triggerCoords, setTriggerCoords] = React.useState<{ pos: number; coords: { x: number; y: number } } | null>(null)
+
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -216,6 +238,7 @@ export function RichTextEditor({
         listItem: false,
       }),
       ListItem,
+      VariableNode,
       Link.configure({
         openOnClick: false,
         HTMLAttributes: {
@@ -237,8 +260,41 @@ export function RichTextEditor({
         class: 'prose prose-sm sm:prose-base max-w-none focus:outline-none px-4 py-3',
         'data-placeholder': placeholder,
       },
+      handleKeyDown: (view, event) => {
+        // Handle @ trigger
+        if (event.key === '@') {
+          // Let the @ be inserted, then show menu
+          setTimeout(() => {
+            const { state, view: editorView } = editorRef.current || {}
+            if (!state || !editorView) return
+
+            const { selection } = state
+            const coords = editorView.coordsAtPos(selection.from)
+
+            // Calculate menu position
+            const menuX = coords.left
+            const menuY = coords.bottom + 4
+
+            setMenuPosition({ x: menuX, y: menuY })
+            setTriggerCoords({ pos: selection.from - 1, coords: { x: menuX, y: menuY } })
+            setSearchQuery("")
+          }, 0)
+        }
+
+        // Close menu on escape
+        if (event.key === 'Escape' && menuPosition) {
+          setMenuPosition(null)
+          setTriggerCoords(null)
+          setSearchQuery("")
+          return true
+        }
+
+        return false
+      },
     },
   })
+
+  editorRef.current = editor
 
   // Update editor content when value changes externally
   React.useEffect(() => {
@@ -246,6 +302,36 @@ export function RichTextEditor({
       editor.commands.setContent(value, { emitUpdate: false })
     }
   }, [value, editor])
+
+  // Handle variable selection
+  const handleSelectVariable = (variable: { id: string; label: string }) => {
+    if (!editor || !triggerCoords) return
+
+    // Delete the @ and insert the variable node
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: triggerCoords.pos, to: editor.state.selection.from })
+      .insertContent({
+        type: 'variable',
+        attrs: {
+          id: variable.id,
+          label: variable.label,
+        },
+      })
+      .run()
+
+    setMenuPosition(null)
+    setTriggerCoords(null)
+    setSearchQuery("")
+  }
+
+  // Close menu handler
+  const handleCloseMenu = () => {
+    setMenuPosition(null)
+    setTriggerCoords(null)
+    setSearchQuery("")
+  }
 
   return (
     <div className={cn("rich-text-editor border border-border rounded-lg overflow-hidden bg-card", className)}>
@@ -342,9 +428,37 @@ export function RichTextEditor({
           border-top: 2px solid #e2e8f0;
           margin: 2em 0;
         }
+
+        /* Template Variables */
+        .ProseMirror .template-variable {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          padding: 0.125rem 0.375rem;
+          border-radius: 0.25rem;
+          background-color: hsl(var(--blue-100) / 0.3);
+          color: hsl(var(--blue-700));
+          font-weight: 500;
+          font-size: 0.875rem;
+          white-space: nowrap;
+        }
+
+        .dark .ProseMirror .template-variable {
+          background-color: hsl(var(--blue-900) / 0.3);
+          color: hsl(var(--blue-300));
+        }
       `}</style>
 
       <EditorContent editor={editor} />
+
+      {menuPosition && (
+        <VariableMenu
+          position={menuPosition}
+          onSelect={handleSelectVariable}
+          onClose={handleCloseMenu}
+          searchQuery={searchQuery}
+        />
+      )}
 
       {!editor && (
         <div className="p-4 text-center text-muted-foreground">

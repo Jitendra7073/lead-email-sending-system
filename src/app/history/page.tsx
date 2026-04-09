@@ -376,9 +376,12 @@ export default function HistoryPage() {
       return;
     }
 
+    // Filter out log items (historical records) - only show queue items
+    const queueItems = items.filter(item => item.source !== 'log');
+
     const grouped = new Map<string, QueueItem[]>();
 
-    for (const item of items) {
+    for (const item of queueItems) {
       const email = item.recipient_email.toLowerCase();
       if (!grouped.has(email)) {
         grouped.set(email, []);
@@ -438,7 +441,7 @@ export default function HistoryPage() {
             position: item.sequence_position || 0,
             subject: item.subject,
             status: item.status,
-            scheduled_at: item.adjusted_scheduled_at || item.scheduled_at,
+            scheduled_at: item.scheduled_at, // Use scheduled_at directly - it has the correct future time
             sent_at: item.sent_at,
             queue_id: item.id,
             template_id: item.template_id,
@@ -1349,9 +1352,27 @@ export default function HistoryPage() {
                 </div>
               )}
 
-              {/* Action Buttons */}
-              <div className="flex flex-wrap gap-2 pt-2">
-                {["pending", "scheduled"].includes(selectedEmail.status) && (
+              {/* Historical Record Notice */}
+              {selectedEmail.source === 'log' && (
+                <div className="p-3 bg-muted/50 border border-muted rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-muted-foreground mb-1">
+                        Historical Record
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        This is a permanent historical record of a sent email. It cannot be modified or deleted.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons - Only for queue items (not log items) */}
+              {selectedEmail.source !== 'log' && (
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {["pending", "scheduled"].includes(selectedEmail.status) && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -1451,7 +1472,8 @@ export default function HistoryPage() {
                     Delete
                   </Button>
                 )}
-              </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -1694,25 +1716,29 @@ function ContactCard({
                                     <p className="text-sm font-medium truncate mt-1">
                                       {email.subject}
                                     </p>
-                                    {schedule && (
-                                      <p className="text-xs text-muted-foreground mt-1">
-                                        {email.status === "sent"
-                                          ? `Sent ${schedule.short}`
-                                          : email.status === "failed"
-                                            ? "Failed to send"
-                                            : schedule.relative}
-                                      </p>
-                                    )}
+                                    {email.status !== "sent" &&
+                                      email.status !== "failed" &&
+                                      email.scheduled_at && (
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          {new Date(email.scheduled_at).toLocaleString()}
+                                        </p>
+                                      )}
                                   </div>
                                   {email.status !== "sent" &&
                                     email.status !== "failed" &&
-                                    schedule && (
+                                    email.scheduled_at && (
                                       <div className="text-right shrink-0">
                                         <p className="text-xs text-muted-foreground">
                                           Scheduled
                                         </p>
                                         <p className="text-sm font-medium">
-                                          {schedule.short}
+                                          {new Date(email.scheduled_at).toLocaleDateString()}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                          {new Date(email.scheduled_at).toLocaleTimeString([], {
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                          })}
                                         </p>
                                       </div>
                                     )}

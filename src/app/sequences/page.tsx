@@ -608,37 +608,38 @@ export default function SequencesPage() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-500">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="space-y-1">
-          <h2 className="text-3xl font-bold tracking-tight">Email Sequences</h2>
-          <p className="text-muted-foreground">
+          <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Email Sequences</h2>
+          <p className="text-sm sm:text-base text-muted-foreground">
             Create ordered email campaigns with automated delays
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <Button
             variant="outline"
+            size="sm"
             onClick={() => setShowInactive(!showInactive)}
             className={cn(showInactive && "bg-accent")}>
             {showInactive ? (
-              <PowerOff className="h-4 w-4 mr-2" />
+              <PowerOff className="h-4 w-4 mr-1 sm:mr-2" />
             ) : (
-              <Power className="h-4 w-4 mr-2" />
+              <Power className="h-4 w-4 mr-1 sm:mr-2" />
             )}
-            Show Inactive
+            <span className="hidden sm:inline">Show Inactive</span>
           </Button>
-          <Button className="gap-2" onClick={() => setShowAddModal(true)}>
+          <Button size="sm" className="gap-2" onClick={() => setShowAddModal(true)}>
             <Plus className="h-4 w-4" />
-            New Sequence
+            <span className="hidden sm:inline">New Sequence</span>
           </Button>
         </div>
       </div>
 
       {/* Search */}
       <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             className="w-full h-10 pl-10 pr-4 bg-card border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -1416,15 +1417,15 @@ function SequenceCard({
         "group hover:shadow-lg transition-all bg-card/50 overflow-hidden border-border/60",
         !sequence.is_active && "opacity-60",
       )}>
-      <CardHeader className="p-4">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <CardTitle className="text-base font-semibold">
+      <CardHeader className="p-3 sm:p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <CardTitle className="text-base font-semibold truncate">
                 {sequence.name}
               </CardTitle>
               {!sequence.is_active && (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-muted text-muted-foreground">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-muted text-muted-foreground shrink-0">
                   Inactive
                 </span>
               )}
@@ -1436,7 +1437,7 @@ function SequenceCard({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             onClick={onToggle}>
             {isExpanded ? (
               <ChevronUp className="h-4 w-4" />
@@ -1446,7 +1447,7 @@ function SequenceCard({
           </Button>
         </div>
 
-        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-3 sm:gap-4 mt-3 text-xs text-muted-foreground flex-wrap">
           <div className="flex items-center gap-1.5">
             <Mail className="h-3.5 w-3.5" />
             <span>{sequence.items?.length || 0} emails</span>
@@ -1461,7 +1462,7 @@ function SequenceCard({
       </CardHeader>
 
       {isExpanded && (
-        <CardContent className="p-4 pt-0 border-t border-border/60">
+        <CardContent className="p-3 sm:p-4 pt-0 border-t border-border/60">
           <div className="space-y-2 mt-4">
             {!sequence.items || sequence.items.length === 0 ? (
               <div className="text-center py-8 text-sm text-muted-foreground">
@@ -1477,26 +1478,26 @@ function SequenceCard({
                   onDrop={(e) => onDrop(e, index)}
                   onDragEnd={onDragEnd}
                   className={cn(
-                    "relative p-3 pr-16 bg-background rounded-lg border border-border/60 group/item hover:border-primary/30 transition-colors cursor-move overflow-hidden",
+                    "relative p-3 pr-12 sm:pr-16 bg-background rounded-lg border border-border/60 group/item hover:border-primary/30 transition-colors cursor-move overflow-hidden",
                     draggedItem?.itemId === item.id && "opacity-50",
                     draggedItem?.sequenceId === sequence.id &&
                       draggedItem?.index !== index &&
                       "border-primary/50",
                   )}>
-                  <div className="flex items-start gap-3">
-                    <div className="flex flex-col items-center gap-1">
+                  <div className="flex items-start gap-2 sm:gap-3">
+                    <div className="flex flex-col items-center gap-1 shrink-0">
                       <div className="w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-bold flex items-center justify-center">
                         {index + 1}
                       </div>
                       {index < (sequence.items?.length || 0) - 1 && (
-                        <div className="w-0.5 h-8 bg-border" />
+                        <div className="w-0.5 h-6 sm:h-8 bg-border" />
                       )}
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 flex-1">
-                          <GripVertical className="h-4 w-4 text-muted-foreground mt-0.5 cursor-grab active:cursor-grabbing" />
+                        <div className="flex items-start gap-2 flex-1 min-w-0">
+                          <GripVertical className="h-4 w-4 text-muted-foreground mt-0.5 cursor-grab active:cursor-grabbing shrink-0" />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">
                               {item.template_name}
@@ -1506,7 +1507,7 @@ function SequenceCard({
                             </p>
                             {(item.delay_days > 0 || item.send_time) && (
                               <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                                <Calendar className="h-3 w-3" />
+                                <Calendar className="h-3 w-3 shrink-0" />
                                 <span>
                                   {item.delay_days > 0
                                     ? `${item.delay_days}d`
@@ -1520,8 +1521,8 @@ function SequenceCard({
                       </div>
                     </div>
 
-                    {/* Action Buttons - Absolute positioned with overlay */}
-                    <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity z-10">
+                    {/* Action Buttons - Always visible on mobile, hover on desktop */}
+                    <div className="absolute top-2 right-2 flex items-center gap-1 opacity-100 sm:opacity-0 group-hover/item:opacity-100 transition-opacity z-10">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1642,15 +1643,14 @@ function Modal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-sm">
       <div
         className={cn(
-          "bg-card rounded-xl border shadow-lg w-full animate-in fade-in duration-200 flex flex-col",
-          sizeClasses[size],
+          "bg-card rounded-xl border shadow-lg w-full max-w-[95vw] sm:max-w-lg animate-in fade-in duration-300 zoom-in-95 slide-in-from-top-[5%] flex flex-col mx-auto",
           size === "full" ? "h-[90vh]" : "max-h-[90vh]",
         )}>
-        <div className="flex items-center justify-between p-4 border-b shrink-0">
-          <h3 className="text-lg font-semibold truncate">{title}</h3>
+        <div className="flex items-center justify-between p-3 sm:p-4 border-b shrink-0">
+          <h3 className="text-base sm:text-lg font-semibold truncate pr-2">{title}</h3>
           <Button
             variant="ghost"
             size="icon"
@@ -1661,16 +1661,16 @@ function Modal({
           </Button>
         </div>
 
-        <div className="p-4 overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+        <div className="p-3 sm:p-4 overflow-y-auto overflow-x-hidden flex-1 min-h-0">
           {children}
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-4 border-t shrink-0">
-          <Button variant="outline" onClick={onClose} disabled={isLoading}>
+        <div className="flex items-center justify-end gap-2 flex-col-reverse sm:flex-row p-3 sm:p-4 border-t shrink-0">
+          <Button variant="outline" className="w-full sm:w-auto" onClick={onClose} disabled={isLoading}>
             Cancel
           </Button>
           <Button
-            className={cn("gap-2", saveClassName)}
+            className={cn("gap-2 w-full sm:w-auto", saveClassName)}
             onClick={onSave}
             disabled={isLoading}>
             {isLoading ? (

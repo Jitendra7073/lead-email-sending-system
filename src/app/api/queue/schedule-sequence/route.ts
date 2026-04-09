@@ -204,7 +204,7 @@ export async function POST(request: Request) {
             item.html_content,
             item.template_id,
             scheduledAt,
-            now,
+            scheduledAt, // adjusted_scheduled_at should be the scheduled time, not current time
             status,
             item.position,
             recipientTimezone,

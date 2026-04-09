@@ -119,8 +119,8 @@ export function AddItemModal({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-      <div className="bg-card rounded-xl border shadow-lg w-full max-w-lg animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-card rounded-xl border shadow-lg w-full max-w-lg animate-in fade-in duration-300 zoom-in-95 slide-in-from-top-[5%]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div className="flex items-center gap-2">

@@ -7,6 +7,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { AccordionItem } from "@/components/ui/accordion"
 import { RichTextEditor } from "@/components/ui/rich-text-editor"
+import { VariableInput } from "@/components/editor/variable-input"
+import { VariableInfoModal } from "@/components/editor/variable-info-modal"
 import { cn } from "@/lib/utils"
 
 interface Template {
@@ -55,6 +57,7 @@ export default function TemplatesPage() {
   const [expandedAccordion, setExpandedAccordion] = React.useState<'details' | 'content' | null>(null)
   const [categoryInputType, setCategoryInputType] = React.useState<"select" | "custom">("select")
   const [showSequenceEditModal, setShowSequenceEditModal] = React.useState(false)
+  const [showVariableInfoModal, setShowVariableInfoModal] = React.useState(false)
   const [tempSequenceNumber, setTempSequenceNumber] = React.useState<number>(1)
   const [formData, setFormData] = React.useState({
     name: '',
@@ -271,7 +274,9 @@ export default function TemplatesPage() {
           }}
           onSave={handleCreateTemplate}
           isLoading={isSaving}
-          size="large">
+          size="large"
+          showVariablesButton={true}
+          onVariablesClick={() => setShowVariableInfoModal(true)}>
           <div className="space-y-4">
             {/* Accordion 1: Template Details */}
             <AccordionItem
@@ -392,12 +397,11 @@ export default function TemplatesPage() {
 
                 <div>
                   <label className="text-sm font-medium">Subject Line</label>
-                  <input
-                    type="text"
-                    className="w-full mt-1 h-10 px-3 bg-card border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  <VariableInput
                     value={formData.subject}
-                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                    onChange={(value) => setFormData({ ...formData, subject: value })}
                     placeholder="Welcome to our service!"
+                    className="mt-1"
                   />
                 </div>
               </div>
@@ -563,7 +567,9 @@ export default function TemplatesPage() {
           }}
           onSave={handleUpdateTemplate}
           isLoading={isSaving}
-          size="large">
+          size="large"
+          showVariablesButton={true}
+          onVariablesClick={() => setShowVariableInfoModal(true)}>
           <div className="space-y-4">
             {/* Accordion 1: Template Details */}
             <AccordionItem
@@ -683,11 +689,11 @@ export default function TemplatesPage() {
 
                 <div>
                   <label className="text-sm font-medium">Subject Line</label>
-                  <input
-                    type="text"
-                    className="w-full mt-1 h-10 px-3 bg-card border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  <VariableInput
                     value={formData.subject}
-                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+                    onChange={(value) => setFormData({ ...formData, subject: value })}
+                    placeholder="Welcome to our service!"
+                    className="mt-1"
                   />
                 </div>
               </div>
@@ -780,6 +786,13 @@ export default function TemplatesPage() {
           </div>
         </Modal>
       )}
+
+      {/* Variable Info Modal */}
+      {showVariableInfoModal && (
+        <VariableInfoModal
+          onClose={() => setShowVariableInfoModal(false)}
+        />
+      )}
     </div>
   )
 }
@@ -852,6 +865,8 @@ function Modal({
   saveClassName = "",
   size = "medium",
   isLoading = false,
+  showVariablesButton = false,
+  onVariablesClick,
   children
 }: {
   title: string
@@ -861,6 +876,8 @@ function Modal({
   saveClassName?: string
   size?: "small" | "medium" | "large" | "xlarge" | "full"
   isLoading?: boolean
+  showVariablesButton?: boolean
+  onVariablesClick?: () => void
   children: React.ReactNode
 }) {
   const sizeClasses = {
@@ -872,9 +889,9 @@ function Modal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className={cn(
-        "bg-card rounded-xl border shadow-lg w-full animate-in fade-in duration-200 flex flex-col",
+        "bg-card rounded-xl border shadow-lg w-full animate-in fade-in duration-300 zoom-in-95 slide-in-from-top-[5%] flex flex-col",
         sizeClasses[size],
         size === "full" ? "h-[90vh]" : "max-h-[90vh]"
       )}>
@@ -887,23 +904,38 @@ function Modal({
 
         <div className="p-4 overflow-y-auto overflow-x-hidden flex-1 min-h-0">{children}</div>
 
-        <div className="flex items-center justify-end gap-3 p-4 border-t bg-muted/30 shrink-0">
-          <Button variant="outline" onClick={onClose} disabled={isLoading}>
-            Cancel
-          </Button>
-          <Button
-            onClick={onSave}
-            disabled={isLoading}
-            className={saveClassName}>
-            {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              saveText
-            )}
-          </Button>
+        <div className="flex items-center justify-between gap-3 p-4 border-t bg-muted/30 shrink-0">
+          {/* Variable Info Button - Bottom Left */}
+          {showVariablesButton && onVariablesClick && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+              onClick={onVariablesClick}>
+              <Info className="h-4 w-4" />
+              <span>Variables</span>
+            </Button>
+          )}
+
+          <div className="flex items-center gap-3 ml-auto">
+            <Button variant="outline" onClick={onClose} disabled={isLoading}>
+              Cancel
+            </Button>
+            <Button
+              onClick={onSave}
+              disabled={isLoading}
+              className={saveClassName}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                saveText
+              )}
+            </Button>
+          </div>
         </div>
       </div>
     </div>

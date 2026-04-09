@@ -184,6 +184,18 @@ export default function ContactsPage() {
   >({});
   const [showSenderWarning, setShowSenderWarning] = React.useState(false);
 
+  // Verification summary dialog state
+  const [showVerificationSummary, setShowVerificationSummary] =
+    React.useState(false);
+  const [verificationSummary, setVerificationSummary] = React.useState<{
+    valid: number;
+    invalid: number;
+    risky: number;
+    unknown: number;
+    newly_verified: number;
+    reused: number;
+  } | null>(null);
+
   const fetchContacts = async (page = 1, type: ContactType = "all") => {
     setLoading(true);
     try {
@@ -620,18 +632,10 @@ export default function ContactsPage() {
           }),
         );
 
-        // Show success summary
+        // Show success summary in dialog
         const { summary } = json;
-        alert(
-          `✅ Verification complete!\n\n` +
-            `📊 Summary:\n` +
-            `✓ Valid: ${summary.valid}\n` +
-            `✗ Invalid: ${summary.invalid}\n` +
-            `⚠ Risky: ${summary.risky}\n` +
-            `? Unknown: ${summary.unknown}\n\n` +
-            `Newly verified: ${summary.newly_verified}\n` +
-            `Reused existing: ${summary.reused}`,
-        );
+        setVerificationSummary(summary);
+        setShowVerificationSummary(true);
       } else {
         setError(json.error || "Failed to verify emails");
         // Reset checking status on error
@@ -859,9 +863,9 @@ export default function ContactsPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between border-b pb-4 -mx-6 px-6">
-            <div className="relative w-full max-w-sm flex gap-2">
+        <CardHeader className="px-4 sm:px-6">
+          <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between border-b pb-4 -mx-4 sm:-mx-6 px-4 sm:px-6">
+            <div className="relative w-full max-w-sm flex gap-2 order-2 md:order-1">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
@@ -892,62 +896,62 @@ export default function ContactsPage() {
                 Search
               </Button> */}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap order-1 md:order-2 w-full md:w-auto justify-end">
               {selectedIds.size > 0 && (
                 <>
                   <span className="text-sm text-muted-foreground">
                     {selectedIds.size} selected
                   </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => handleBulkAction("queue")}
-                    disabled={bulkActionLoading}>
-                    {bulkActionLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Mail className="h-4 w-4" />
-                    )}
-                    Add to Queue
-                  </Button>
-                  {activeTab === "email" && (
+                  <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
                     <Button
                       variant="outline"
                       size="sm"
                       className="gap-2"
-                      onClick={handleCheckEmails}
+                      onClick={() => handleBulkAction("queue")}
                       disabled={bulkActionLoading}>
                       {bulkActionLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <CheckCircle2 className="h-4 w-4" />
+                        <Mail className="h-4 w-4" />
                       )}
-                      Check Emails
+                      <span className="hidden xs:inline">Queue</span>
                     </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => handleBulkAction("cancel")}
-                    disabled={bulkActionLoading}>
-                    <X className="h-4 w-4" />
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 text-destructive hover:text-destructive"
-                    onClick={() => handleBulkAction("delete")}
-                    disabled={bulkActionLoading}>
-                    {bulkActionLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
+                    {activeTab === "email" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={handleCheckEmails}
+                        disabled={bulkActionLoading}>
+                        {bulkActionLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        <span className="hidden xs:inline">Check</span>
+                      </Button>
                     )}
-                    Delete
-                  </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleBulkAction("cancel")}
+                      disabled={bulkActionLoading}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-destructive hover:text-destructive"
+                      onClick={() => handleBulkAction("delete")}
+                      disabled={bulkActionLoading}>
+                      {bulkActionLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      <span className="hidden sm:inline">Delete</span>
+                    </Button>
+                  </div>
                 </>
               )}
             </div>
@@ -957,158 +961,182 @@ export default function ContactsPage() {
           <Tabs
             value={activeTab}
             onValueChange={(v) => setActiveTab(v as ContactType)}>
-            <TabsList className="mx-6 mt-4">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="email">
-                <Mail className="h-4 w-4 mr-1" />
-                Email
-              </TabsTrigger>
-              <TabsTrigger value="phone">
-                <Phone className="h-4 w-4 mr-1" />
-                Phone
-              </TabsTrigger>
-              <TabsTrigger value="linkedin">
-                <ExternalLink className="h-4 w-4 mr-1" />
-                LinkedIn
-              </TabsTrigger>
-            </TabsList>
+            <div className="mx-4 sm:mx-6 mt-4 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+              <TabsList className="w-full sm:w-auto inline-flex min-w-max">
+                <TabsTrigger value="all">All</TabsTrigger>
+                <TabsTrigger value="email">
+                  <Mail className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Email</span>
+                </TabsTrigger>
+                <TabsTrigger value="phone">
+                  <Phone className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">Phone</span>
+                </TabsTrigger>
+                <TabsTrigger value="linkedin">
+                  <ExternalLink className="h-4 w-4 mr-1" />
+                  <span className="hidden sm:inline">LinkedIn</span>
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[50px]">
-                    <Checkbox
-                      checked={
-                        contacts.length > 0 &&
-                        selectedIds.size === contacts.length
-                      }
-                      onCheckedChange={handleSelectAll}
-                    />
-                  </TableHead>
-                  <TableHead>Contact Info</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Source Website</TableHead>
-                  <TableHead>Country</TableHead>
-                  <TableHead>Verification</TableHead>
-                  <TableHead>Added On</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  [...Array(6)].map((_, i) => (
-                    <TableRow key={i}>
-                      {[...Array(7)].map((_, j) => (
-                        <TableCell key={j}>
-                          <div className="h-8 bg-muted animate-pulse rounded" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : contacts.length === 0 ? (
+            {/* Mobile-friendly table wrapper with horizontal scroll */}
+            <div className="overflow-x-auto -mx-6 px-6">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={7} className="h-64 text-center">
-                      <div className="flex flex-col items-center gap-2 opacity-40">
-                        <Users className="h-12 w-12" />
-                        <p className="font-medium text-lg">No contacts found</p>
-                      </div>
-                    </TableCell>
+                    <TableHead className="w-[50px] sticky left-0 bg-background">
+                      <Checkbox
+                        checked={
+                          contacts.length > 0 &&
+                          selectedIds.size === contacts.length
+                        }
+                        onCheckedChange={handleSelectAll}
+                      />
+                    </TableHead>
+                    <TableHead>Contact Info</TableHead>
+                    <TableHead className="hidden sm:table-cell">Type</TableHead>
+                    <TableHead className="hidden md:table-cell">Source Website</TableHead>
+                    <TableHead className="hidden lg:table-cell">Country</TableHead>
+                    <TableHead>Verification</TableHead>
+                    <TableHead className="hidden md:table-cell">Added On</TableHead>
+                    <TableHead className="text-right sticky right-0 bg-background">Actions</TableHead>
                   </TableRow>
-                ) : (
-                  contacts.map((contact) => (
-                    <TableRow key={contact.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedIds.has(contact.id)}
-                          onCheckedChange={() => handleSelectOne(contact.id)}
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {contact.value}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <TypeIcon type={contact.type} />
-                          <span className="capitalize text-xs">
-                            {contact.type}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate text-muted-foreground text-xs">
-                        {contact.site_url || "N/A"}
-                      </TableCell>
-                      <TableCell>
-                        {contact.country ? (
-                          <span className="bg-muted px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-tight">
-                            {contact.country}
-                          </span>
-                        ) : (
-                          "N/A"
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {contact.type === "email" ? (
-                          contact.verification_status === "checking" ? (
-                            <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                          ) : contact.verification_status === "valid" ? (
-                            <div className="flex items-center gap-1">
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                              <span className="text-xs text-green-600">
-                                Valid
-                              </span>
-                            </div>
-                          ) : contact.verification_status === "invalid" ? (
-                            <div className="flex items-center gap-1">
-                              <XCircle className="h-4 w-4 text-red-500" />
-                              <span className="text-xs text-red-600">
-                                Invalid
-                              </span>
-                            </div>
-                          ) : contact.verification_status === "risky" ? (
-                            <div className="flex items-center gap-1">
-                              <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                              <span className="text-xs text-yellow-600">
-                                Risky
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1 opacity-50">
-                              <AlertCircle className="h-4 w-4" />
-                              <span className="text-xs">Unverified</span>
-                            </div>
-                          )
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            N/A
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-xs">
-                        {formatDate(contact.created_at)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handleEditContact(contact)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-destructive hover:text-destructive"
-                            onClick={() => handleDeleteContact(contact.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                </TableHeader>
+                <TableBody>
+                  {loading ? (
+                    [...Array(6)].map((_, i) => (
+                      <TableRow key={i}>
+                        {[...Array(7)].map((_, j) => (
+                          <TableCell key={j}>
+                            <div className="h-8 bg-muted animate-pulse rounded" />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ) : contacts.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="h-64 text-center">
+                        <div className="flex flex-col items-center gap-2 opacity-40">
+                          <Users className="h-12 w-12" />
+                          <p className="font-medium text-lg">No contacts found</p>
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : (
+                    contacts.map((contact) => (
+                      <TableRow key={contact.id}>
+                        <TableCell className="sticky left-0 bg-background">
+                          <Checkbox
+                            checked={selectedIds.has(contact.id)}
+                            onCheckedChange={() => handleSelectOne(contact.id)}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-1">
+                            <span className="break-all">{contact.value}</span>
+                            {/* Show type inline on mobile */}
+                            <div className="flex items-center gap-1 sm:hidden">
+                              <TypeIcon type={contact.type} />
+                              <span className="text-[10px] text-muted-foreground uppercase">
+                                {contact.type}
+                              </span>
+                            </div>
+                          </div>
+                          {/* Show country below contact on mobile */}
+                          {(contact.country || contact.site_url) && (
+                            <div className="flex flex-wrap items-center gap-2 mt-1 sm:hidden text-xs text-muted-foreground">
+                              {contact.country && (
+                                <span className="bg-muted/50 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">
+                                  {contact.country}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          <div className="flex items-center gap-2">
+                            <TypeIcon type={contact.type} />
+                            <span className="capitalize text-xs">
+                              {contact.type}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell max-w-[200px] truncate text-muted-foreground text-xs">
+                          {contact.site_url || "N/A"}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          {contact.country ? (
+                            <span className="bg-muted px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-tight">
+                              {contact.country}
+                            </span>
+                          ) : (
+                            "N/A"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {contact.type === "email" ? (
+                            contact.verification_status === "checking" ? (
+                              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                            ) : contact.verification_status === "valid" ? (
+                              <div className="flex items-center gap-1">
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                <span className="text-xs text-green-600 hidden sm:inline">
+                                  Valid
+                                </span>
+                              </div>
+                            ) : contact.verification_status === "invalid" ? (
+                              <div className="flex items-center gap-1">
+                                <XCircle className="h-4 w-4 text-red-500" />
+                                <span className="text-xs text-red-600 hidden sm:inline">
+                                  Invalid
+                                </span>
+                              </div>
+                            ) : contact.verification_status === "risky" ? (
+                              <div className="flex items-center gap-1">
+                                <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                                <span className="text-xs text-yellow-600 hidden sm:inline">
+                                  Risky
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 opacity-50">
+                                <AlertCircle className="h-4 w-4" />
+                                <span className="text-xs hidden sm:inline">Unverified</span>
+                              </div>
+                            )
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              N/A
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground text-xs">
+                          {formatDate(contact.created_at)}
+                        </TableCell>
+                        <TableCell className="text-right sticky right-0 bg-background">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleEditContact(contact)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteContact(contact.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </Tabs>
         </CardContent>
         {meta.totalPages > 1 && (
@@ -1136,7 +1164,7 @@ export default function ContactsPage() {
 
       {/* Sequence Selection Modal */}
       <Dialog open={showSequenceModal} onOpenChange={setShowSequenceModal}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="w-[95%] mx-auto max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Select Email Sequence</DialogTitle>
             <DialogDescription>
@@ -1284,7 +1312,7 @@ export default function ContactsPage() {
 
       {/* Sequence Wizard Modal */}
       <Dialog open={showWizard} onOpenChange={setShowWizard}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95%] mx-auto max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {wizardStep === "sequence" && "Step 1: Select Email Sequence"}
@@ -1527,7 +1555,7 @@ export default function ContactsPage() {
                     return (
                       <div
                         key={`${email.contact_id}-${email.template_id}-${idx}`}
-                        className={`flex items-start gap-3 p-3 border rounded-lg transition-colors ${
+                        className={`flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 p-3 border rounded-lg transition-colors ${
                           hasWarning
                             ? "border-amber-500/50 bg-amber-500/5"
                             : email.status === "ready"
@@ -1536,15 +1564,15 @@ export default function ContactsPage() {
                         }`}
                         onClick={() => !isEditing && setEditingEmail(email)}>
                         <div className="flex-1 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded font-medium">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded font-medium shrink-0">
                               {email.position}
                             </span>
                             <p className="text-sm font-medium truncate">
                               {email.template_name}
                             </p>
                             {hasWarning && (
-                              <span className="text-xs bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded flex items-center gap-1">
+                              <span className="text-xs bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
                                 <AlertCircle className="h-3 w-3" />
                                 {email.status === "weekend"
                                   ? "Weekend"
@@ -1552,17 +1580,17 @@ export default function ContactsPage() {
                               </span>
                             )}
                             {!hasWarning && email.status === "ready" && (
-                              <span className="text-xs bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded flex items-center gap-1">
+                              <span className="text-xs bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded flex items-center gap-1 shrink-0">
                                 <CheckCircle2 className="h-3 w-3" />
                                 Valid
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Mail className="h-3 w-3" />
-                            <span>{email.contact_email}</span>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <Mail className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{email.contact_email}</span>
                             {contact?.country && (
-                              <span className="bg-muted px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-tight">
+                              <span className="bg-muted px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-tight shrink-0">
                                 {contact.country}
                               </span>
                             )}
@@ -1617,7 +1645,7 @@ export default function ContactsPage() {
                         {/* Scheduled Date Display */}
                         {!isEditing && (
                           <div
-                            className="text-right shrink-0 cursor-pointer hover:bg-muted p-2 rounded"
+                            className="text-left sm:text-right shrink-0 cursor-pointer hover:bg-muted p-2 rounded w-full sm:w-auto"
                             onClick={(e) => {
                               e.stopPropagation();
                               setEditingEmail(email);
@@ -1671,7 +1699,7 @@ export default function ContactsPage() {
 
       {/* Edit Contact Modal */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
-        <DialogContent>
+        <DialogContent className="w-[95%] mx-auto max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Contact</DialogTitle>
             <DialogDescription>
@@ -1754,7 +1782,7 @@ export default function ContactsPage() {
 
       {/* Sender Warning Modal */}
       <Dialog open={showSenderWarning} onOpenChange={setShowSenderWarning}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[95%] mx-auto max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600">
               <AlertTriangle className="h-5 w-5" />
@@ -1796,6 +1824,99 @@ export default function ContactsPage() {
               }}
               className="bg-amber-600 hover:bg-amber-700">
               Go to Senders
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Verification Summary Dialog */}
+      <Dialog
+        open={showVerificationSummary}
+        onOpenChange={setShowVerificationSummary}>
+        <DialogContent className="w-[95%] mx-auto max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+              Verification Complete!
+            </DialogTitle>
+            <DialogDescription>
+              Email verification has been completed successfully.
+            </DialogDescription>
+          </DialogHeader>
+          {verificationSummary && (
+            <div className="space-y-4 py-4">
+              {/* Summary Table */}
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <tbody>
+                    <tr className="border-b" style={{ backgroundColor: "rgba(16, 185, 129, 0.1)" }}>
+                      <td className="px-4 py-3 flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                        Valid Emails
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-emerald-600">
+                        {verificationSummary.valid}
+                      </td>
+                    </tr>
+                    <tr className="border-b" style={{ backgroundColor: "rgba(239, 68, 68, 0.1)" }}>
+                      <td className="px-4 py-3 flex items-center gap-2">
+                        <XCircle className="h-4 w-4 text-red-500" />
+                        Invalid Emails
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-red-600">
+                        {verificationSummary.invalid}
+                      </td>
+                    </tr>
+                    <tr className="border-b" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)" }}>
+                      <td className="px-4 py-3 flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        Risky Emails
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-amber-600">
+                        {verificationSummary.risky}
+                      </td>
+                    </tr>
+                    <tr style={{ backgroundColor: "rgba(148, 163, 184, 0.15)" }}>
+                      <td className="px-4 py-3 flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 text-slate-500" />
+                        Unknown Status
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-slate-600">
+                        {verificationSummary.unknown}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Additional Info */}
+              <div className="grid grid-cols-2 gap-3">
+                <div
+                  className="rounded-lg p-3 text-center border"
+                  style={{ backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: "rgba(59, 130, 246, 0.3)" }}>
+                  <p className="text-xs text-blue-600 mb-1">
+                    Newly Verified
+                  </p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    {verificationSummary.newly_verified}
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg p-3 text-center border"
+                  style={{ backgroundColor: "rgba(168, 85, 247, 0.1)", borderColor: "rgba(168, 85, 247, 0.3)" }}>
+                  <p className="text-xs text-purple-600 mb-1">
+                    Reused Cached
+                  </p>
+                  <p className="text-2xl font-bold text-purple-700">
+                    {verificationSummary.reused}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setShowVerificationSummary(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
