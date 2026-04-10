@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
     // Build query with filters
     let query = `
-      SELECT
+      SELECT DISTINCT ON (c.id)
         c.*,
         s.url as site_url,
         s.country,
@@ -24,7 +24,8 @@ export async function GET(request: Request) {
         s.timezone as detected_timezone,
         ev.status as verification_status,
         ev.reason as verification_reason,
-        ev.checked_at as verification_checked_at
+        ev.checked_at as verification_checked_at,
+        ev.details->>'overall_score' as overall_score
       FROM contacts c
       LEFT JOIN sites s ON c.site_id = s.id
       LEFT JOIN contact_email_verifications cev ON c.id = cev.contact_id
@@ -74,7 +75,8 @@ export async function GET(request: Request) {
     const total = parseInt(countData[0]?.total || '0');
 
     // Add ordering and pagination
-    query += ` ORDER BY c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    // Note: DISTINCT ON requires ORDER BY to include the DISTINCT column
+    query += ` ORDER BY c.id, c.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     params.push(limit, offset);
 
     const data = await executeQuery(query, params);

@@ -59,9 +59,16 @@ interface Contact {
   country?: string;
   source_page?: string;
   created_at: string;
-  verification_status?: "valid" | "invalid" | "risky" | "unverified" | "checking" | null;
+  verification_status?:
+    | "valid"
+    | "invalid"
+    | "risky"
+    | "unverified"
+    | "checking"
+    | null;
   verification_reason?: string | null;
   verification_checked_at?: string | null;
+  overall_score?: number | null;
 }
 
 interface Site {
@@ -208,7 +215,13 @@ export default function ContactsPage() {
       );
       const json = await res.json();
       if (json.success) {
-        setContacts(json.data);
+        // Deduplicate contacts by ID to prevent React key errors
+        const uniqueContacts = Array.from(
+          new Map(
+            json.data.map((contact: any) => [contact.id, contact]),
+          ).values(),
+        ) as Contact[];
+        setContacts(uniqueContacts);
         setMeta(json.meta);
         if (json.stats) {
           setStats(json.stats);
@@ -995,19 +1008,27 @@ export default function ContactsPage() {
                     </TableHead>
                     <TableHead>Contact Info</TableHead>
                     <TableHead className="hidden sm:table-cell">Type</TableHead>
-                    <TableHead className="hidden md:table-cell">Source Website</TableHead>
-                    <TableHead className="hidden lg:table-cell">Country</TableHead>
+                    <TableHead className="hidden md:table-cell">
+                      Source Website
+                    </TableHead>
+                    <TableHead className="hidden lg:table-cell">
+                      Country
+                    </TableHead>
                     <TableHead>Verification</TableHead>
-                    <TableHead className="hidden md:table-cell">Added On</TableHead>
-                    <TableHead className="text-right sticky right-0 bg-background">Actions</TableHead>
+                    <TableHead className="hidden md:table-cell">
+                      Added On
+                    </TableHead>
+                    <TableHead className="text-right sticky right-0 bg-background">
+                      Actions
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     [...Array(6)].map((_, i) => (
-                      <TableRow key={i}>
+                      <TableRow key={`skeleton-${i}`}>
                         {[...Array(7)].map((_, j) => (
-                          <TableCell key={j}>
+                          <TableCell key={`skeleton-${i}-${j}`}>
                             <div className="h-8 bg-muted animate-pulse rounded" />
                           </TableCell>
                         ))}
@@ -1018,7 +1039,9 @@ export default function ContactsPage() {
                       <TableCell colSpan={8} className="h-64 text-center">
                         <div className="flex flex-col items-center gap-2 opacity-40">
                           <Users className="h-12 w-12" />
-                          <p className="font-medium text-lg">No contacts found</p>
+                          <p className="font-medium text-lg">
+                            No contacts found
+                          </p>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1083,6 +1106,11 @@ export default function ContactsPage() {
                                 <span className="text-xs text-green-600 hidden sm:inline">
                                   Valid
                                 </span>
+                                {contact.overall_score && (
+                                  <span className="text-xs font-semibold text-green-700">
+                                    - {contact.overall_score}%
+                                  </span>
+                                )}
                               </div>
                             ) : contact.verification_status === "invalid" ? (
                               <div className="flex items-center gap-1">
@@ -1090,6 +1118,11 @@ export default function ContactsPage() {
                                 <span className="text-xs text-red-600 hidden sm:inline">
                                   Invalid
                                 </span>
+                                {contact.overall_score && (
+                                  <span className="text-xs font-semibold text-red-700">
+                                    - {contact.overall_score}%
+                                  </span>
+                                )}
                               </div>
                             ) : contact.verification_status === "risky" ? (
                               <div className="flex items-center gap-1">
@@ -1097,11 +1130,18 @@ export default function ContactsPage() {
                                 <span className="text-xs text-yellow-600 hidden sm:inline">
                                   Risky
                                 </span>
+                                {contact.overall_score && (
+                                  <span className="text-xs font-semibold text-yellow-700">
+                                    - {contact.overall_score}%
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <div className="flex items-center gap-1 opacity-50">
                                 <AlertCircle className="h-4 w-4" />
-                                <span className="text-xs hidden sm:inline">Unverified</span>
+                                <span className="text-xs hidden sm:inline">
+                                  Unverified
+                                </span>
                               </div>
                             )
                           ) : (
@@ -1588,7 +1628,9 @@ export default function ContactsPage() {
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <Mail className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{email.contact_email}</span>
+                            <span className="truncate">
+                              {email.contact_email}
+                            </span>
                             {contact?.country && (
                               <span className="bg-muted px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-tight shrink-0">
                                 {contact.country}
@@ -1699,7 +1741,7 @@ export default function ContactsPage() {
 
       {/* Edit Contact Modal */}
       <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
-        <DialogContent className="w-[95%] mx-auto max-w-md">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Contact</DialogTitle>
             <DialogDescription>
@@ -1849,7 +1891,9 @@ export default function ContactsPage() {
               <div className="border rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
                   <tbody>
-                    <tr className="border-b" style={{ backgroundColor: "rgba(16, 185, 129, 0.1)" }}>
+                    <tr
+                      className="border-b"
+                      style={{ backgroundColor: "rgba(16, 185, 129, 0.1)" }}>
                       <td className="px-4 py-3 flex items-center gap-2">
                         <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                         Valid Emails
@@ -1858,7 +1902,9 @@ export default function ContactsPage() {
                         {verificationSummary.valid}
                       </td>
                     </tr>
-                    <tr className="border-b" style={{ backgroundColor: "rgba(239, 68, 68, 0.1)" }}>
+                    <tr
+                      className="border-b"
+                      style={{ backgroundColor: "rgba(239, 68, 68, 0.1)" }}>
                       <td className="px-4 py-3 flex items-center gap-2">
                         <XCircle className="h-4 w-4 text-red-500" />
                         Invalid Emails
@@ -1867,7 +1913,9 @@ export default function ContactsPage() {
                         {verificationSummary.invalid}
                       </td>
                     </tr>
-                    <tr className="border-b" style={{ backgroundColor: "rgba(245, 158, 11, 0.1)" }}>
+                    <tr
+                      className="border-b"
+                      style={{ backgroundColor: "rgba(245, 158, 11, 0.1)" }}>
                       <td className="px-4 py-3 flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-amber-500" />
                         Risky Emails
@@ -1876,7 +1924,8 @@ export default function ContactsPage() {
                         {verificationSummary.risky}
                       </td>
                     </tr>
-                    <tr style={{ backgroundColor: "rgba(148, 163, 184, 0.15)" }}>
+                    <tr
+                      style={{ backgroundColor: "rgba(148, 163, 184, 0.15)" }}>
                       <td className="px-4 py-3 flex items-center gap-2">
                         <AlertCircle className="h-4 w-4 text-slate-500" />
                         Unknown Status
@@ -1893,20 +1942,22 @@ export default function ContactsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div
                   className="rounded-lg p-3 text-center border"
-                  style={{ backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: "rgba(59, 130, 246, 0.3)" }}>
-                  <p className="text-xs text-blue-600 mb-1">
-                    Newly Verified
-                  </p>
+                  style={{
+                    backgroundColor: "rgba(59, 130, 246, 0.1)",
+                    borderColor: "rgba(59, 130, 246, 0.3)",
+                  }}>
+                  <p className="text-xs text-blue-600 mb-1">Newly Verified</p>
                   <p className="text-2xl font-bold text-blue-700">
                     {verificationSummary.newly_verified}
                   </p>
                 </div>
                 <div
                   className="rounded-lg p-3 text-center border"
-                  style={{ backgroundColor: "rgba(168, 85, 247, 0.1)", borderColor: "rgba(168, 85, 247, 0.3)" }}>
-                  <p className="text-xs text-purple-600 mb-1">
-                    Reused Cached
-                  </p>
+                  style={{
+                    backgroundColor: "rgba(168, 85, 247, 0.1)",
+                    borderColor: "rgba(168, 85, 247, 0.3)",
+                  }}>
+                  <p className="text-xs text-purple-600 mb-1">Reused Cached</p>
                   <p className="text-2xl font-bold text-purple-700">
                     {verificationSummary.reused}
                   </p>

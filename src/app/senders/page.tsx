@@ -13,6 +13,8 @@ import {
   Eye,
   EyeOff,
   Pencil,
+  AlertCircle,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +44,19 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 
+interface Alias {
+  id: string;
+  sender_id: string;
+  alias_email: string;
+  alias_name: string | null;
+  is_verified: boolean;
+  verification_method: string;
+  dns_spf_valid: boolean | null;
+  dns_dkim_valid: boolean | null;
+  last_used_at: string | null;
+  created_at: string;
+}
+
 interface Sender {
   id: string;
   name: string;
@@ -53,6 +68,7 @@ interface Sender {
   daily_limit: number;
   sent_today: number;
   created_at: string;
+  alias_email?: string | null;
 }
 
 export default function SendersPage() {
@@ -74,6 +90,19 @@ export default function SendersPage() {
   const [smtpTestPassed, setSmtpTestPassed] = useState(false);
   const [editTestPassed, setEditTestPassed] = useState(false);
 
+  // Alias management state
+  const [aliases, setAliases] = useState<Alias[]>([]);
+  const [showAliasDialog, setShowAliasDialog] = useState(false);
+  const [selectedSenderIdForAliases, setSelectedSenderIdForAliases] = useState<
+    string | null
+  >(null);
+  const [addingAlias, setAddingAlias] = useState(false);
+  const [verifyingAlias, setVerifyingAlias] = useState(false);
+  const [aliasFormData, setAliasFormData] = useState({
+    alias_email: "",
+    alias_name: "",
+  });
+
   // Gmail form state
   const [gmailData, setGmailData] = useState({
     name: "",
@@ -90,6 +119,7 @@ export default function SendersPage() {
     smtpHost: "smtp.gmail.com",
     smtpPort: "587",
     dailyLimit: "500",
+    aliasEmail: "", // NEW: Single alias email
   });
 
   // Edit form state
@@ -110,12 +140,34 @@ export default function SendersPage() {
       const json = await res.json();
       if (json.success) {
         setSenders(json.data);
+        // Fetch aliases for all senders
+        const aliasesRes = await fetch("/api/aliases");
+        const aliasesJson = await aliasesRes.json();
+        if (aliasesJson.success) {
+          setAliases(aliasesJson.data);
+        }
       }
     } catch (error) {
       console.error("Error fetching senders:", error);
       toast.error("Failed to load senders");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAliases = async (senderId?: string) => {
+    try {
+      const url = senderId
+        ? `/api/aliases?sender_id=${senderId}`
+        : "/api/aliases";
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.success) {
+        setAliases(json.data);
+      }
+    } catch (error) {
+      console.error("Error fetching aliases:", error);
+      toast.error("Failed to load aliases");
     }
   };
 
@@ -180,6 +232,7 @@ export default function SendersPage() {
           smtp_port: parseInt(smtpData.smtpPort),
           smtp_user: smtpData.email,
           daily_limit: parseInt(smtpData.dailyLimit),
+          alias_email: smtpData.aliasEmail || null, // NEW: Send alias email
         }),
       });
 
@@ -194,6 +247,7 @@ export default function SendersPage() {
           smtpHost: "smtp.gmail.com",
           smtpPort: "587",
           dailyLimit: "500",
+          aliasEmail: "",
         });
         setShowAddDialog(false);
         fetchSenders();
@@ -436,6 +490,119 @@ export default function SendersPage() {
       setEditTestPassed(false);
     } finally {
       setTestingEditConnection(false);
+    }
+  };
+
+  const handleOpenAliasDialog = (senderId: string) => {
+    setSelectedSenderIdForAliases(senderId);
+    setAliasFormData({ alias_email: "", alias_name: "" });
+    setShowAliasDialog(true);
+  };
+
+  const handleAddAlias = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSenderIdForAliases) return;
+
+    setAddingAlias(true);
+
+    try {
+      const res = await fetch("/api/aliases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sender_id: selectedSenderIdForAliases,
+          alias_email: aliasFormData.alias_email,
+          alias_name: aliasFormData.alias_name || undefined,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (json.success) {
+        toast.success(json.message || "Alias added successfully!");
+        setAliasFormData({ alias_email: "", alias_name: "" });
+        fetchAliases();
+      } else {
+        toast.error(json.error || "Failed to add alias");
+      }
+    } catch (error) {
+      console.error("Error adding alias:", error);
+      toast.error("Failed to add alias");
+    } finally {
+      setAddingAlias(false);
+    }
+  };
+
+  const handleVerifyAlias = async (aliasId: string) => {
+    setVerifyingAlias(true);
+
+    try {
+      const res = await fetch("/api/aliases/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alias_id: aliasId }),
+      });
+
+      const json = await res.json();
+
+      if (json.success) {
+        toast.success("✓ " + json.message);
+        fetchAliases();
+      } else {
+        toast.error("✗ " + json.error);
+      }
+    } catch (error) {
+      console.error("Error verifying alias:", error);
+      toast.error("Failed to verify alias");
+    } finally {
+      setVerifyingAlias(false);
+    }
+  };
+
+  const handleToggleAliasVerified = async (
+    aliasId: string,
+    currentStatus: boolean,
+  ) => {
+    try {
+      const res = await fetch(`/api/aliases/${aliasId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_verified: !currentStatus }),
+      });
+
+      const json = await res.json();
+
+      if (json.success) {
+        toast.success(`Alias ${!currentStatus ? "verified" : "unverified"}`);
+        fetchAliases();
+      } else {
+        toast.error(json.error || "Failed to update alias");
+      }
+    } catch (error) {
+      console.error("Error updating alias:", error);
+      toast.error("Failed to update alias");
+    }
+  };
+
+  const handleDeleteAlias = async (aliasId: string) => {
+    if (!confirm("Are you sure you want to delete this alias?")) return;
+
+    try {
+      const res = await fetch(`/api/aliases/${aliasId}`, {
+        method: "DELETE",
+      });
+
+      const json = await res.json();
+
+      if (json.success) {
+        toast.success("Alias deleted successfully");
+        fetchAliases();
+      } else {
+        toast.error(json.error || "Failed to delete alias");
+      }
+    } catch (error) {
+      console.error("Error deleting alias:", error);
+      toast.error("Failed to delete alias");
     }
   };
 
@@ -731,6 +898,23 @@ export default function SendersPage() {
                         )}
                       </Button>
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="smtp-alias">Alias Email (Optional)</Label>
+                    <Input
+                      id="smtp-alias"
+                      type="email"
+                      placeholder="alias@domain.com"
+                      value={smtpData.aliasEmail}
+                      onChange={(e) =>
+                        setSmtpData({ ...smtpData, aliasEmail: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Email will be sent through this email address. Leave empty
+                      to use main email.
+                    </p>
                   </div>
 
                   <Button
@@ -1031,6 +1215,104 @@ export default function SendersPage() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Add Alias Dialog */}
+        <Dialog open={showAliasDialog} onOpenChange={setShowAliasDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add Email Alias</DialogTitle>
+              <DialogDescription>
+                Add an alias address to send emails from. You can use multiple
+                aliases per sender account.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleAddAlias} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="alias-email">Alias Email Address</Label>
+                <Input
+                  id="alias-email"
+                  type="email"
+                  placeholder="alias@domain.com"
+                  value={aliasFormData.alias_email}
+                  onChange={(e) =>
+                    setAliasFormData({
+                      ...aliasFormData,
+                      alias_email: e.target.value,
+                    })
+                  }
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  This email will be used as the "From" address when sending
+                  emails. Make sure it belongs to the same domain or is properly
+                  configured.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="alias-name">Sender Name (Optional)</Label>
+                <Input
+                  id="alias-name"
+                  placeholder="Display Name"
+                  value={aliasFormData.alias_name}
+                  onChange={(e) =>
+                    setAliasFormData({
+                      ...aliasFormData,
+                      alias_name: e.target.value,
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  The display name for emails sent from this alias. Leave empty
+                  to use the sender&apos;s default name.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                <div className="flex gap-2">
+                  <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-blue-800 dark:text-blue-200">
+                    <p className="font-medium mb-1">Important Notes:</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li>
+                        For Gmail: Use "Send mail as" feature in Gmail Settings
+                      </li>
+                      <li>
+                        Ensure SPF/DKIM records are configured for the alias
+                        domain
+                      </li>
+                      <li>
+                        Verify the alias before sending emails to ensure
+                        deliverability
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowAliasDialog(false)}
+                  className="flex-1">
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={addingAlias} className="flex-1">
+                  {addingAlias ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Adding...
+                    </>
+                  ) : (
+                    "Add Alias"
+                  )}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Senders List */}
@@ -1100,6 +1382,19 @@ export default function SendersPage() {
                     <span className="text-muted-foreground">Sent Today:</span>
                     <span className="font-medium">{sender.sent_today}</span>
                   </div>
+
+                  {/* Alias Email Display */}
+                  {sender.alias_email && (
+                    <div className="pt-2 border-t">
+                      <div className="text-xs text-muted-foreground mb-1">
+                        Sending through:
+                      </div>
+                      <div className="text-sm font-medium text-primary">
+                        {sender.alias_email}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="w-full bg-secondary rounded-full h-2 mt-2">
                     <div
                       className="bg-primary h-2 rounded-full transition-all"

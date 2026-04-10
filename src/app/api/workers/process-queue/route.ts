@@ -14,7 +14,10 @@ import { workerLogger } from '@/lib/workers/worker-logger';
 
 export async function GET(request: Request) {
   // Check CRON_SECRET authorization
+  // Accept secret via either Authorization header OR query parameter
   const authHeader = request.headers.get('authorization');
+  const { searchParams } = new URL(request.url);
+  const secretParam = searchParams.get('secret');
   const cronSecret = process.env.CRON_SECRET;
 
   if (!cronSecret) {
@@ -24,7 +27,10 @@ export async function GET(request: Request) {
     }, { status: 500 });
   }
 
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  // Check Authorization header OR query parameter
+  const isValidAuth = authHeader === `Bearer ${cronSecret}` || secretParam === cronSecret;
+
+  if (!isValidAuth) {
     return NextResponse.json({
       success: false,
       error: 'Unauthorized'
@@ -81,11 +87,15 @@ export async function GET(request: Request) {
   workerLogger.startRun();
 
   try {
-    // 1. Fetch dependency-aware actionable queue items
+    // 1. Fetch dependency-aware actionable queue items with website URL
     const fetchQuery = `
-      SELECT q.*, s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user
+      SELECT q.*,
+             s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
+             st.url as website_url
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
+      LEFT JOIN contacts c ON q.contact_id = c.id
+      LEFT JOIN sites st ON c.site_id = st.id
       WHERE q.status = 'ready_to_send'
       AND q.adjusted_scheduled_at <= NOW()
       AND q.dependency_satisfied = TRUE
@@ -189,7 +199,13 @@ export async function GET(request: Request) {
             item.recipient_email,
             item.subject,
             item.html_content,
-            item.id
+            item.id,
+            {
+              recipientName: item.recipient_name,
+              recipientEmail: item.recipient_email,
+              websiteUrl: item.website_url,
+              senderName: senderCredentials.name
+            }
           );
           messageId = info.messageId;
           sendSuccess = true;

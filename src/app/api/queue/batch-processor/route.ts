@@ -183,9 +183,15 @@ async function processQueue() {
 
     const queueItems = await executeQuery(
       `
-      SELECT q.*, s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user
+      SELECT q.*,
+             s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
+             s.service as sender_service,
+             s.alias_email as sender_alias_email,
+             st.url as website_url
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
+      LEFT JOIN contacts c ON q.contact_id = c.id
+      LEFT JOIN sites st ON c.site_id = st.id
       WHERE q.status IN ('queued', 'pending', 'scheduled', 'ready_to_send')
       AND DATE(q.scheduled_at) = $1
       AND (q.adjusted_scheduled_at IS NULL OR q.adjusted_scheduled_at <= NOW())
@@ -254,8 +260,14 @@ async function processQueue() {
         }
 
         // Send email
+        // Use alias_email if available, otherwise use main email
+        const fromAlias = item.sender_alias_email ? {
+          aliasEmail: item.sender_alias_email,
+          aliasName: senderCredentials.name
+        } : undefined;
+
         console.log(
-          `📤 Sending via ${senderCredentials.sender_email || senderCredentials.email}...`,
+          `📤 Sending via ${senderCredentials.sender_email || senderCredentials.email}${fromAlias ? ` as ${fromAlias.aliasEmail}` : ''}...`,
         );
 
         const info = await sendEmailWithNodemailer(
@@ -264,6 +276,13 @@ async function processQueue() {
           item.subject,
           item.html_content || "",
           item.id,
+          {
+            recipientName: item.recipient_name,
+            recipientEmail: item.recipient_email,
+            websiteUrl: item.website_url,
+            senderName: fromAlias?.aliasName || senderCredentials.name
+          },
+          fromAlias
         );
 
         // 6. Mark as sent (Centralized update)

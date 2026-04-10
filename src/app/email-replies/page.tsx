@@ -25,6 +25,7 @@ import {
 import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Check, ChevronDown } from "lucide-react";
 
 interface Reply {
   id: string;
@@ -42,6 +43,13 @@ interface Reply {
   is_reply: boolean;
   recipient_email: string;
   original_subject: string;
+}
+
+interface RecipientEmail {
+  email: string;
+  emailCount: number;
+  lastSentAt: string;
+  recentSubjects: string[];
 }
 
 interface EmailRepliesProps {
@@ -82,9 +90,25 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
   const [filterEndDate, setFilterEndDate] = useState("");
   const [filterEmail, setFilterEmail] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [recipients, setRecipients] = useState<RecipientEmail[]>([]);
+  const [showEmailDropdown, setShowEmailDropdown] = useState(false);
+  const [emailSearchTerm, setEmailSearchTerm] = useState("");
 
-  // Validation
-  const canCheck = filterStartDate || filterEndDate || filterEmail;
+  // Filters are now OPTIONAL - no validation needed
+
+  // Fetch recipient emails
+  const fetchRecipients = async () => {
+    try {
+      const response = await fetch("/api/email-replies/recipients");
+      const result = await response.json();
+
+      if (result.success) {
+        setRecipients(result.recipients);
+      }
+    } catch (error) {
+      console.error("Error fetching recipients:", error);
+    }
+  };
 
   // Fetch replies
   const fetchReplies = async () => {
@@ -97,7 +121,11 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
       const result = await response.json();
 
       if (result.success) {
-        setReplies(result.data);
+        // Deduplicate replies by ID to prevent React key errors
+        const uniqueReplies = Array.from(
+          new Map(result.data.map((reply: Reply) => [reply.id, reply])).values()
+        ) as Reply[];
+        setReplies(uniqueReplies);
       }
     } catch (error) {
       console.error("Error fetching replies:", error);
@@ -213,6 +241,7 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
   // Initial fetch and set up interval
   useEffect(() => {
     fetchReplies();
+    fetchRecipients(); // Fetch recipients on mount
 
     const interval = setInterval(fetchReplies, 30000); // Refresh every 30 seconds
 
@@ -248,18 +277,14 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
           </Button>
           <Button
             onClick={checkForNewReplies}
-            disabled={isChecking || !canCheck}
+            disabled={isChecking}
             className="bg-blue-600 hover:bg-blue-700 text-white">
             <Mail
               className={`h-4 w-4 mr-2 ${isChecking ? "animate-pulse" : ""}`}
             />
             {isChecking ? "Checking..." : "Check for New Replies"}
           </Button>
-          {!canCheck && !isChecking && (
-            <p className="absolute -bottom-6 right-0 text-[10px] text-red-500 font-medium whitespace-nowrap">
-              * Please set at least one filter below first
-            </p>
-          )}
+          {/* Filters are now optional - no warning message needed */}
           <Button
             variant="outline"
             onClick={fetchReplies}
@@ -294,7 +319,8 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
               </Button>
             </div>
             <CardDescription className="text-xs">
-              Narrow down which sent emails to check for new replies.
+              Optionally filter by date range or recipient email. Leave blank to
+              check all replies.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -327,14 +353,63 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
                 <Label htmlFor="email" className="text-xs">
                   Recipient Email
                 </Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="customer@example.com"
-                  value={filterEmail}
-                  onChange={(e) => setFilterEmail(e.target.value)}
-                  className="h-9"
-                />
+                <div className="relative">
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Select or type recipient email..."
+                    value={filterEmail}
+                    onChange={(e) => {
+                      setFilterEmail(e.target.value);
+                      setEmailSearchTerm(e.target.value);
+                      setShowEmailDropdown(e.target.value.length > 0);
+                    }}
+                    onFocus={() => setShowEmailDropdown(true)}
+                    className="h-9"
+                  />
+                  {showEmailDropdown && (
+                    <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-60 overflow-y-auto">
+                      {recipients.length > 0 ? (
+                        <div className="p-1">
+                          {recipients
+                            .filter((r) =>
+                              r.email
+                                .toLowerCase()
+                                .includes(emailSearchTerm.toLowerCase()),
+                            )
+                            .map((recipient) => (
+                              <button
+                                key={recipient.email}
+                                type="button"
+                                className="w-full text-left px-3 py-2 hover:bg-muted rounded-md transition-colors flex items-center justify-between group"
+                                onClick={() => {
+                                  setFilterEmail(recipient.email);
+                                  setShowEmailDropdown(false);
+                                  setEmailSearchTerm("");
+                                }}>
+                                <div className="flex flex-col items-start">
+                                  <span className="text-sm font-medium">
+                                    {recipient.email}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {recipient.emailCount} email
+                                    {recipient.emailCount > 1 ? "s" : ""} sent
+                                  </span>
+                                </div>
+                                {filterEmail === recipient.email && (
+                                  <Check className="h-4 w-4 text-primary" />
+                                )}
+                              </button>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="p-3 text-sm text-muted-foreground text-center">
+                          No sent emails found
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </CardContent>
@@ -477,13 +552,13 @@ export default function EmailReplies({ queueId }: EmailRepliesProps = {}) {
                             </div>
                             <div className="flex gap-1">
                               <a
-                                href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(reply.from_email)}`}
+                                className="h-7 w-7 inline-flex items-center
+                              justify-center text-blue-600 hover:text-white
+                              hover:bg-blue-600 rounded-full transition-colors"
+                                href={`https://mail.google.com/mail/?view=cm&fs=1&to=${reply.from_email}`}
                                 target="_blank"
-                                rel="noopener noreferrer"
-                                className="h-7 w-7 inline-flex items-center justify-center text-blue-600 hover:text-white hover:bg-blue-600 rounded-full transition-colors"
-                                onClick={(e) => e.stopPropagation()}
-                                title="Reply via Gmail">
-                                <Reply className="h-3.5 w-3.5" />
+                                rel="noopener noreferrer">
+                                <Reply />
                               </a>
                               <Button
                                 variant="ghost"

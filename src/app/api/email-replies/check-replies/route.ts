@@ -65,15 +65,24 @@ export async function POST(request: Request) {
     }
 
     let sentEmails: any[] = [];
-    let searchQuery = 'is:unread';
+    let searchQuery = 'in:inbox'; // CRITICAL FIX: Search ALL inbox messages, not just unread
 
     if (searchDirectly) {
       // Stage 1: Skip DB, build Gmail search query directly from filters
+      // IMPORTANT: Search for REPLIES FROM the recipient, not emails TO them
       if (recipientEmail) searchQuery += ` from:(${recipientEmail})`;
       if (startDate) searchQuery += ` after:${Math.floor(new Date(startDate).getTime() / 1000)}`;
       if (endDate) searchQuery += ` before:${Math.floor(new Date(endDate).getTime() / 1000)}`;
-      
-      // We still need to fetch some sent emails later for matching, or match them one-by-one
+
+      // Fetch ALL sent emails for potential matching (wider net)
+      sentEmails = await executeQuery(`
+        SELECT id, message_id, recipient_email, subject, sent_at
+        FROM email_queue
+        WHERE message_id IS NOT NULL
+        AND status = 'sent'
+        AND sent_at >= $1
+        ORDER BY sent_at DESC
+      `, [startDate ? new Date(startDate) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)]);
     } else {
       // Stage 1: Legacy - Fetch sent emails from DB first
       let query = `
@@ -181,34 +190,89 @@ export async function POST(request: Request) {
         const subjectHeader = headers.find((h: any) => h.name === 'Subject');
         const messageIdHeader = headers.find((h: any) => h.name === 'Message-ID');
 
-        if (!inReplyToHeader || !messageIdHeader) {
-          errors.push({
-            messageId: msg.id,
-            reason: 'Missing In-Reply-To or Message-ID header'
-          });
-          continue;
+        // MULTIPLE MATCHING STRATEGIES - Don't skip if only In-Reply-To is missing
+        const inReplyTo = inReplyToHeader?.value || '';
+        const referencesHeader = headers.find((h: any) => h.name === 'References');
+        const references = referencesHeader?.value ? referencesHeader.value.split(/\s+/).filter(Boolean) : [];
+        const threadId = messageData.data.threadId;
+
+        // MULTIPLE MATCHING STRATEGIES - ENHANCED
+        let originalEmail = null;
+        let matchStrategy = '';
+
+        // Strategy 1: Match by In-Reply-To header (most reliable)
+        if (inReplyTo) {
+          originalEmail = sentEmails.find(
+            (e: any) => e.message_id === inReplyTo
+          );
+          if (originalEmail) matchStrategy = 'In-Reply-To';
         }
 
-        // Find the original email this is replying to
-        let originalEmail = sentEmails.find(
-          (e: any) => e.message_id === inReplyToHeader.value
-        );
+        // Strategy 2: Match by References header (contains thread history)
+        if (!originalEmail && references.length > 0) {
+          for (const ref of references) {
+            const found = sentEmails.find((e: any) => e.message_id === ref);
+            if (found) {
+              originalEmail = found;
+              matchStrategy = 'References';
+              break;
+            }
+          }
+        }
 
-        if (!originalEmail && searchDirectly) {
-          // If searching directly, we might not have the sent email in our local list yet
-          const matchResult = await executeQuery(
-            'SELECT id, recipient_email, subject, message_id FROM email_queue WHERE message_id = $1 LIMIT 1',
-            [inReplyToHeader.value]
-          );
-          if (matchResult && matchResult.length > 0) {
-            originalEmail = matchResult[0];
+        // Strategy 3: Match by Sender + Subject + Date Range (NEW - Most Robust)
+        if (!originalEmail) {
+          const fromEmail = parseEmailHeader(fromHeader?.value || '');
+          const subject = subjectHeader?.value || '';
+          const replyDate = new Date(); // Will be set from message headers
+
+          // Find sent email to this person with similar subject
+          originalEmail = sentEmails.find((e: any) => {
+            // Must match recipient
+            if (e.recipient_email !== fromEmail) return false;
+
+            // Check subject similarity (handle RE:, FW:, etc.)
+            const cleanReplySubject = subject
+              .replace(/^(re|fw|fwd|reply|forward):\s*/i, '')
+              .trim()
+              .toLowerCase();
+            const cleanSentSubject = e.subject
+              .replace(/^(re|fw|fwd|reply|forward):\s*/i, '')
+              .trim()
+              .toLowerCase();
+
+            // Match if subjects are similar (one contains the other)
+            const subjectsMatch = cleanReplySubject.includes(cleanSentSubject) ||
+                                 cleanSentSubject.includes(cleanReplySubject) ||
+                                 cleanReplySubject.length > 0 && cleanSentSubject.length > 0 &&
+                                 (cleanReplySubject.includes(cleanSentSubject.substring(0, 20)) ||
+                                  cleanSentSubject.includes(cleanReplySubject.substring(0, 20)));
+
+            return subjectsMatch;
+          });
+
+          if (originalEmail) matchStrategy = 'Sender+Subject';
+        }
+
+        // Strategy 4: Match by Subject only (last resort)
+        if (!originalEmail) {
+          const subject = subjectHeader?.value || '';
+          const isReply = /^(re|fw|fwd|reply|forward):/i.test(subject);
+
+          if (isReply) {
+            const baseSubject = subject.replace(/^(re|fw|fwd|reply|forward):\s*/i, '').trim().toLowerCase();
+            originalEmail = sentEmails.find((e: any) => {
+              const sentSubject = e.subject.toLowerCase();
+              return sentSubject.includes(baseSubject) || baseSubject.includes(sentSubject);
+            });
+            if (originalEmail) matchStrategy = 'Subject-Only';
           }
         }
 
         if (!originalEmail) {
           errors.push({
             messageId: msg.id,
-            reason: `Reply to unknown message ID: ${inReplyToHeader.value}`
+            reason: `Could not match reply to any sent email. From: ${fromHeader?.value}, Subject: ${subjectHeader?.value}, In-Reply-To: ${inReplyTo || 'none'}, Match Strategy: ${matchStrategy || 'none'}`
           });
           continue;
         }
@@ -252,7 +316,7 @@ export async function POST(request: Request) {
               subjectHeader?.value || '',
               body,
               fullMessage.data.threadId!,
-              inReplyToHeader.value,
+              inReplyTo,
               msg.id
             ]
           );
@@ -280,14 +344,14 @@ export async function POST(request: Request) {
             `,
             [
               originalEmail.id,
-              inReplyToHeader.value,
+              inReplyTo,
               msg.id,
               fromEmail,
               fromName,
               subjectHeader?.value || '',
               body,
               fullMessage.data.threadId!,
-              inReplyToHeader.value,
+              inReplyTo,
               true,
               originalEmail.recipient_email,
               originalEmail.subject
@@ -312,7 +376,8 @@ export async function POST(request: Request) {
           body: body.substring(0, 100) + '...',
           receivedAt: new Date().toISOString(),
           originalEmailId: originalEmail.id,
-          originalSubject: originalEmail.subject
+          originalSubject: originalEmail.subject,
+          matchStrategy: matchStrategy || 'Unknown'
         });
 
       } catch (error: any) {

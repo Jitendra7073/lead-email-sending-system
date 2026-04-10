@@ -12,12 +12,16 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
 
-    // 1. Fetch the queue item with all required data
+    // 1. Fetch the queue item with all required data including website URL
     const queueItems = await executeQuery(
       `
-      SELECT q.*, s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user
+      SELECT q.*,
+             s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
+             st.url as website_url
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
+      LEFT JOIN contacts c ON q.contact_id = c.id
+      LEFT JOIN sites st ON c.site_id = st.id
       WHERE q.id = $1
       LIMIT 1
     `,
@@ -82,7 +86,13 @@ export async function POST(request: Request, context: RouteContext) {
         item.recipient_email,
         item.subject,
         item.html_content,
-        id
+        id,
+        {
+          recipientName: item.recipient_name,
+          recipientEmail: item.recipient_email,
+          websiteUrl: item.website_url,
+          senderName: senderCredentials.name
+        }
       );
 
       // 5. Mark as sent (Centralized update)
