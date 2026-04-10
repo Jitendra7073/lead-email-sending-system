@@ -3,6 +3,8 @@
  * Handles variable extraction and replacement for email templates
  */
 
+import { executeQuery } from "./db/postgres";
+
 export interface EmailVariable {
   key: string;
   label: string;
@@ -17,6 +19,7 @@ export interface VariableContext {
   website_url?: string;
   company_name?: string;
   date?: string;
+  region?: string;
 }
 
 /**
@@ -61,6 +64,14 @@ export const EMAIL_VARIABLES: EmailVariable[] = [
       'Current date in format: MMMM DD, YYYY (e.g., "April 09, 2026")',
     color: "#ef4444",
     category: "date",
+  },
+  {
+    key: "{{region}}",
+    label: "Region/Country",
+    description:
+      'Full country name of the recipient based on their country code (e.g., "US" → "United States", "IN" → "India")',
+    color: "#ec4899",
+    category: "receiver",
   },
 ];
 
@@ -285,6 +296,9 @@ function getVariableValue(
     case "{{date}}":
       return context.date || getCurrentDate();
 
+    case "{{region}}":
+      return context.region || "";
+
     default:
       return null;
   }
@@ -330,6 +344,27 @@ export function hasVariables(content: string): boolean {
  */
 export function getVariableByKey(key: string): EmailVariable | undefined {
   return EMAIL_VARIABLES.find((v) => v.key === key);
+}
+
+/**
+ * Fetch country name from country_timezones table by country code
+ * @param countryCode - Two-letter country code (e.g., 'US', 'IN', 'GB')
+ * @returns Full country name or empty string if not found
+ */
+export async function getCountryName(countryCode: string): Promise<string> {
+  if (!countryCode) return "";
+
+  try {
+    const result = await executeQuery(
+      `SELECT country_name FROM country_timezones WHERE country_code = $1 LIMIT 1`,
+      [countryCode.toUpperCase()]
+    );
+
+    return result && result.length > 0 ? result[0].country_name : "";
+  } catch (error) {
+    console.error(`Error fetching country name for code ${countryCode}:`, error);
+    return "";
+  }
 }
 
 /**

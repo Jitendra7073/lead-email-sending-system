@@ -11,6 +11,7 @@ import {
   rescheduleEmail
 } from '@/lib/queue/queue-status-manager';
 import { workerLogger } from '@/lib/workers/worker-logger';
+import { getCountryName } from '@/lib/email-variables';
 
 export async function GET(request: Request) {
   // Check CRON_SECRET authorization
@@ -91,7 +92,8 @@ export async function GET(request: Request) {
     const fetchQuery = `
       SELECT q.*,
              s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
-             st.url as website_url
+             st.url as website_url,
+             c.country_code
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
       LEFT JOIN contacts c ON q.contact_id = c.id
@@ -194,6 +196,9 @@ export async function GET(request: Request) {
         let sendError = null;
 
         try {
+          // Fetch country name if country_code is available
+          const countryName = item.country_code ? await getCountryName(item.country_code) : "";
+
           const info = await sendEmailWithNodemailer(
             senderCredentials.id,
             item.recipient_email,
@@ -204,7 +209,8 @@ export async function GET(request: Request) {
               recipientName: item.recipient_name,
               recipientEmail: item.recipient_email,
               websiteUrl: item.website_url,
-              senderName: senderCredentials.name
+              senderName: senderCredentials.name,
+              region: countryName
             }
           );
           messageId = info.messageId;

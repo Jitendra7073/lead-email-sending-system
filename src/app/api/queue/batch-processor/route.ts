@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { executeQuery } from "@/lib/db/postgres";
 import { sendEmailWithNodemailer } from "@/lib/email/sender";
+import { getCountryName } from "@/lib/email-variables";
 
 // In-memory queue processor state (in production, use Redis or database)
 const processorState = {
@@ -187,7 +188,8 @@ async function processQueue() {
              s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
              s.service as sender_service,
              s.alias_email as sender_alias_email,
-             st.url as website_url
+             st.url as website_url,
+             c.country_code
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
       LEFT JOIN contacts c ON q.contact_id = c.id
@@ -270,6 +272,9 @@ async function processQueue() {
           `📤 Sending via ${senderCredentials.sender_email || senderCredentials.email}${fromAlias ? ` as ${fromAlias.aliasEmail}` : ''}...`,
         );
 
+        // Fetch country name if country_code is available
+        const countryName = item.country_code ? await getCountryName(item.country_code) : "";
+
         const info = await sendEmailWithNodemailer(
           senderCredentials.id || senderCredentials.sender_id || item.sender_id,
           item.recipient_email,
@@ -280,7 +285,8 @@ async function processQueue() {
             recipientName: item.recipient_name,
             recipientEmail: item.recipient_email,
             websiteUrl: item.website_url,
-            senderName: fromAlias?.aliasName || senderCredentials.name
+            senderName: fromAlias?.aliasName || senderCredentials.name,
+            region: countryName
           },
           fromAlias
         );

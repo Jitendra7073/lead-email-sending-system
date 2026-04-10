@@ -21,6 +21,7 @@ export async function sendEmailWithNodemailer(
     recipientEmail?: string;
     websiteUrl?: string;
     senderName?: string;
+    region?: string;
   },
   aliasOptions?: AliasOptions
 ) {
@@ -68,6 +69,7 @@ export async function sendEmailWithNodemailer(
     sender_name: context?.senderName || fromName,
     receiver_email: context?.recipientEmail || recipient,
     website_url: context?.websiteUrl,
+    region: context?.region,
   };
 
   const processedSubject = replaceVariables(subject, variableContext);

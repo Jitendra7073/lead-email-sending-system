@@ -46,6 +46,13 @@ export const TEMPLATE_VARIABLES: TemplateVariable[] = [
     description: 'Current date in format: MMMM D, YYYY (e.g., "January 15, 2025")',
     example: 'January 15, 2025',
     icon: '📅'
+  },
+  {
+    key: 'region',
+    label: 'Region/Country',
+    description: 'Full country name of the recipient (e.g., "United States", "India", "United Kingdom")',
+    example: 'United States',
+    icon: '🌍'
   }
 ]
 
@@ -109,6 +116,7 @@ export interface VariableValues {
   receiver_name?: string
   receiver_email?: string
   website_url?: string
+  region?: string
 }
 
 export function replaceTemplateVariables(
@@ -139,6 +147,11 @@ export function replaceTemplateVariables(
 
   // Replace date
   result = result.replace(/\{\{date\}\}/gi, formatDate())
+
+  // Replace region
+  if (values.region) {
+    result = result.replace(/\{\{region\}\}/gi, values.region)
+  }
 
   return result
 }
