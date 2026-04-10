@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(pnpm install:*)",
+      "Bash(node scripts/setup-auth.js)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

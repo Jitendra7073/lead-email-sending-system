@@ -1,6 +1,5 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 
@@ -20,9 +19,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} min-h-screen bg-background`}>
         <ThemeProvider defaultTheme="dark" storageKey="email-system-theme">
-          <DashboardLayout>
-            {children}
-          </DashboardLayout>
+          {children}
           <Toaster richColors position="top-right" />
         </ThemeProvider>
       </body>
