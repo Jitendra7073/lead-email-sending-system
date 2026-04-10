@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import Image from "next/image";
 
 const navItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -39,18 +40,18 @@ export function Sidebar() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
       });
 
       if (response.ok) {
-        router.push('/login');
+        router.push("/login");
         router.refresh();
       } else {
-        console.error('Logout failed');
+        console.error("Logout failed");
       }
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error("Logout error:", error);
     }
   };
 
@@ -73,20 +74,20 @@ export function Sidebar() {
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}>
         <div className="flex flex-col h-full">
-          <div className="p-6 border-b">
-            <Link
-              href="/"
-              className="flex items-center gap-2 font-bold text-xl tracking-tight">
-              <div className="p-1.5 bg-primary text-primary-foreground rounded-lg">
-                <Users className="h-5 w-5" />
-              </div>
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-600">
-                EmailSystem
-              </span>
+          <div className="w-full flex justify-center items-center py-6 -mt-20 -mb-20">
+            <Link href="/" className="inline-block">
+              <Image
+                src="/site_logo.png"
+                alt="Site Logo"
+                width={175}
+                height={80}
+                className="object-contain"
+                priority
+              />
             </Link>
           </div>
 
-          <nav className="flex-1 overflow-y-auto p-4 space-y-1">
+          <nav className="flex-1 overflow-y-auto p-4 space-y-1 border-t">
             {navItems.map((item) => {
               const active = pathname === item.href;
               return (
@@ -116,8 +117,7 @@ export function Sidebar() {
             <Button
               variant="ghost"
               onClick={handleLogout}
-              className="w-full justify-start"
-            >
+              className="w-full justify-start">
               <LogOut className="mr-2 h-4 w-4" />
               Logout
             </Button>
