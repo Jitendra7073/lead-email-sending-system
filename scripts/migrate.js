@@ -178,7 +178,7 @@ async function runMigrations() {
       CREATE TABLE IF NOT EXISTS email_campaigns (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL,
-        group_id UUID REFERENCES template_groups(id),
+        group_id UUID REFERENCES template_groups(id) ON DELETE CASCADE,
         target_type TEXT DEFAULT 'all' CHECK (target_type IN ('all', 'wordpress', 'selected', 'tag')),
         status TEXT DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'paused', 'completed')),
         total_recipients INTEGER DEFAULT 0,
@@ -195,8 +195,8 @@ async function runMigrations() {
       CREATE TABLE IF NOT EXISTS email_queue (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         campaign_id UUID REFERENCES email_campaigns(id) ON DELETE CASCADE,
-        sender_id UUID REFERENCES email_senders(id),
-        contact_id INTEGER REFERENCES contacts(id),
+        sender_id UUID REFERENCES email_senders(id) ON DELETE CASCADE,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
         recipient_email TEXT NOT NULL,
         recipient_name TEXT,
         subject TEXT NOT NULL,
@@ -220,10 +220,10 @@ async function runMigrations() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS email_send_log (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        contact_id INTEGER REFERENCES contacts(id),
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
         contact_email TEXT NOT NULL,
-        template_id UUID REFERENCES email_templates(id),
-        campaign_id UUID REFERENCES email_campaigns(id),
+        template_id UUID REFERENCES email_templates(id) ON DELETE CASCADE,
+        campaign_id UUID REFERENCES email_campaigns(id) ON DELETE CASCADE,
         send_type TEXT DEFAULT 'main',
         status TEXT DEFAULT 'queued' CHECK (status IN ('queued', 'sent', 'failed')),
         sent_at TIMESTAMPTZ,

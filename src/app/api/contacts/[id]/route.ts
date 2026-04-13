@@ -93,10 +93,17 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const result = await executeQuery(
-      'DELETE FROM contacts WHERE id = $1 RETURNING id',
-      [id]
-    );
+    // Delete dependent records first to satisfy foreign key constraints
+    const query = `
+      WITH deleted_logs AS (
+        DELETE FROM email_send_log WHERE contact_id = $1
+      ),
+      deleted_queue AS (
+        DELETE FROM email_queue WHERE contact_id = $1
+      )
+      DELETE FROM contacts WHERE id = $1 RETURNING id;
+    `;
+    const result = await executeQuery(query, [id]);
 
     if (result.length === 0) {
       return NextResponse.json({
