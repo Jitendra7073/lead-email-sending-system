@@ -17,7 +17,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const { id } = await params;
     const body = await request.json();
 
-    const allowedFields = ['name', 'email', 'app_password', 'is_active', 'daily_limit', 'service', 'smtp_host', 'smtp_port', 'smtp_user'];
+    const allowedFields = ['name', 'email', 'app_password', 'is_active', 'daily_limit', 'service', 'smtp_host', 'smtp_port', 'smtp_user', 'alias_email'];
     const fieldsToUpdate = [];
     const values = [];
     let paramIndex = 1;

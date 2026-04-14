@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, data: result[0] }, { status: 201 });
   } catch (error: any) {
     if (error.code === '23505') { // unique violation
-      return NextResponse.json({ success: false, error: 'Email sender with this exact address already exists' }, { status: 409 });
+      return NextResponse.json({ success: false, error: 'Email sender with this email and alias already exists' }, { status: 409 });
     }
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

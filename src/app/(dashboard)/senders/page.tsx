@@ -109,6 +109,7 @@ export default function SendersPage() {
     email: "",
     appPassword: "",
     dailyLimit: "500",
+    aliasEmail: "", // NEW: Support aliases for Gmail too
   });
 
   // SMTP form state
@@ -131,6 +132,7 @@ export default function SendersPage() {
     smtpPort: "",
     dailyLimit: "500",
     service: "",
+    aliasEmail: "", // NEW: Support alias editing
   });
 
   const fetchSenders = async () => {
@@ -188,6 +190,7 @@ export default function SendersPage() {
           email: gmailData.email,
           app_password: gmailData.appPassword,
           service: "gmail",
+          alias_email: gmailData.aliasEmail || null,
           daily_limit: parseInt(gmailData.dailyLimit),
         }),
       });
@@ -201,6 +204,7 @@ export default function SendersPage() {
           email: "",
           appPassword: "",
           dailyLimit: "500",
+          aliasEmail: "",
         });
         setShowAddDialog(false);
         fetchSenders();
@@ -396,6 +400,7 @@ export default function SendersPage() {
       smtpPort: sender.smtp_port?.toString() || "587",
       dailyLimit: sender.daily_limit.toString(),
       service: sender.service,
+      aliasEmail: sender.alias_email || "",
     });
     setEditTestPassed(false);
     setShowEditDialog(true);
@@ -423,6 +428,7 @@ export default function SendersPage() {
               : undefined,
           smtp_user: editData.service === "smtp" ? editData.email : undefined,
           daily_limit: parseInt(editData.dailyLimit),
+          alias_email: editData.aliasEmail || null,
         }),
       });
 
@@ -440,6 +446,7 @@ export default function SendersPage() {
           smtpPort: "",
           dailyLimit: "500",
           service: "",
+          aliasEmail: "",
         });
         fetchSenders();
       } else {
@@ -714,6 +721,23 @@ export default function SendersPage() {
                         className="text-primary hover:underline">
                         Google Support
                       </a>
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="gmail-alias">Alias Email (Optional)</Label>
+                    <Input
+                      id="gmail-alias"
+                      type="email"
+                      placeholder="alias@domain.com"
+                      value={gmailData.aliasEmail}
+                      onChange={(e) =>
+                        setGmailData({ ...gmailData, aliasEmail: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Email will be sent through this email address. Leave empty
+                      to use main email.
                     </p>
                   </div>
 
@@ -1167,6 +1191,23 @@ export default function SendersPage() {
                   </>
                 )}
               </Button>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-alias">Alias Email (Optional)</Label>
+                <Input
+                  id="edit-alias"
+                  type="email"
+                  placeholder="alias@domain.com"
+                  value={editData.aliasEmail}
+                  onChange={(e) =>
+                    setEditData({ ...editData, aliasEmail: e.target.value })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Email will be sent through this email address. Leave empty to
+                  use main email.
+                </p>
+              </div>
 
               <div className="space-y-2">
                 <Label htmlFor="edit-daily-limit">Daily Limit</Label>

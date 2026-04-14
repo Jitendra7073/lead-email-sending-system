@@ -116,7 +116,8 @@ async function runMigrations() {
       CREATE TABLE IF NOT EXISTS email_senders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL,
+        alias_email TEXT,
         app_password TEXT NOT NULL,
         service TEXT DEFAULT 'gmail',
         smtp_host TEXT DEFAULT 'smtp.gmail.com',
@@ -127,7 +128,8 @@ async function runMigrations() {
         sent_today INTEGER DEFAULT 0,
         last_reset_date TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT email_senders_email_alias_key UNIQUE NULLS NOT DISTINCT (email, alias_email)
       );
     `);
 
