@@ -156,6 +156,12 @@ export default function HistoryPage() {
   const [countryTimezones, setCountryTimezones] = React.useState<
     Record<string, any>
   >({});
+  const [pagination, setPagination] = useState({
+    total: 0,
+    page: 1,
+    limit: 200,
+    totalPages: 1,
+  });
 
   // Batch processor state
   const [processorState, setProcessorState] = useState<{
@@ -195,17 +201,26 @@ export default function HistoryPage() {
     null,
   );
 
-  const fetchQueue = async (quiet = false) => {
+  const fetchQueue = async (page = 1, quiet = false) => {
     if (!quiet) setLoading(true);
     else setRefreshing(true);
 
     try {
-      const statusParam =
-        statusFilter !== "all" ? `&status=${statusFilter}` : "";
-      const res = await fetch(`/api/queue?limit=500&offset=0${statusParam}`);
+      const statusParam = statusFilter !== "all" ? `&status=${statusFilter}` : "";
+      const limit = pagination.limit;
+      const offset = (page - 1) * limit;
+      const res = await fetch(`/api/queue?limit=${limit}&offset=${offset}${statusParam}`);
       const json = await res.json();
       if (json.success) {
         setItems(json.data);
+        if (json.pagination) {
+          setPagination({
+            ...pagination,
+            total: json.pagination.total,
+            page: page,
+            totalPages: json.pagination.totalPages,
+          });
+        }
       }
     } catch (err) {
       console.error(err);
@@ -216,7 +231,7 @@ export default function HistoryPage() {
   };
 
   React.useEffect(() => {
-    fetchQueue();
+    fetchQueue(1);
   }, [statusFilter]);
 
   // Fetch queue mode setting
@@ -680,8 +695,6 @@ export default function HistoryPage() {
         <Button
           variant="outline"
           className="gap-2"
-          onClick={() => fetchQueue(true)}
-          disabled={refreshing}>
           <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
           Refresh
         </Button>
@@ -1166,6 +1179,68 @@ export default function HistoryPage() {
                   bulkActionLoading={bulkActionLoading}
                 />
               ))}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between p-4 border-t gap-2 bg-muted/5">
+              <div className="text-xs text-muted-foreground hidden sm:block">
+                Showing <span className="font-medium">{items.length}</span> of{" "}
+                <span className="font-medium">{pagination.total}</span> records
+              </div>
+              <div className="flex items-center gap-1 sm:gap-2 mx-auto sm:mx-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={pagination.page <= 1}
+                  onClick={() => fetchQueue(pagination.page - 1)}>
+                  <ChevronUp className="h-4 w-4 -rotate-90" />
+                  <span className="hidden xs:inline">Prev</span>
+                </Button>
+
+                <div className="flex items-center gap-1 mx-1">
+                  {Array.from(
+                    { length: Math.min(5, pagination.totalPages) },
+                    (_, i) => {
+                      let pageNum: number;
+                      if (pagination.totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (pagination.page <= 3) {
+                        pageNum = i + 1;
+                      } else if (pagination.page >= pagination.totalPages - 2) {
+                        pageNum = pagination.totalPages - 4 + i;
+                      } else {
+                        pageNum = pagination.page - 2 + i;
+                      }
+
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={
+                            pagination.page === pageNum ? "default" : "outline"
+                          }
+                          size="icon"
+                          className="h-8 w-8 text-xs font-medium"
+                          onClick={() => fetchQueue(pageNum)}>
+                          {pageNum}
+                        </Button>
+                      );
+                    },
+                  )}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => fetchQueue(pagination.page + 1)}>
+                  <span className="hidden xs:inline">Next</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

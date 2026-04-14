@@ -67,10 +67,7 @@ export async function GET(request: Request) {
     }
 
     // Get total count for pagination
-    const countQuery = query.replace(
-      /SELECT c\.\*, s\.url as site_url, s\.country, s\.is_wordpress, s\.timezone as detected_timezone/,
-      'SELECT COUNT(*) as total'
-    );
+    const countQuery = `SELECT COUNT(*) as total FROM (${query}) as sub`;
     const countData = await executeQuery(countQuery, params);
     const total = parseInt(countData[0]?.total || '0');
 

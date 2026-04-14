@@ -1179,27 +1179,79 @@ export default function ContactsPage() {
             </div>
           </Tabs>
         </CardContent>
-        {meta.totalPages > 1 && (
-          <div className="flex items-center justify-center p-4 border-t gap-2">
+        <div className="flex items-center justify-between p-4 border-t gap-2 bg-muted/5">
+          <div className="text-xs text-muted-foreground hidden sm:block">
+            Showing <span className="font-medium">{contacts.length}</span> of{" "}
+            <span className="font-medium">{meta.total}</span> contacts
+          </div>
+          <div className="flex items-center gap-1 sm:gap-2 mx-auto sm:mx-0">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 hidden xs:flex"
+              disabled={meta.page <= 1}
+              onClick={() => fetchContacts(1, activeTab)}
+              title="First Page">
+              <ChevronUp className="h-4 w-4 -rotate-90" />
+              <ChevronUp className="h-4 w-4 -rotate-90 -ml-2" />
+            </Button>
             <Button
               variant="outline"
               size="sm"
+              className="h-8 gap-1"
               disabled={meta.page <= 1}
               onClick={() => fetchContacts(meta.page - 1, activeTab)}>
-              Previous
+              <ChevronUp className="h-4 w-4 -rotate-90" />
+              <span className="hidden xs:inline">Prev</span>
             </Button>
-            <div className="text-xs font-medium px-4">
-              Page {meta.page} of {meta.totalPages}
+
+            <div className="flex items-center gap-1 mx-1">
+              {Array.from({ length: Math.min(5, meta.totalPages) }, (_, i) => {
+                let pageNum: number;
+                if (meta.totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (meta.page <= 3) {
+                  pageNum = i + 1;
+                } else if (meta.page >= meta.totalPages - 2) {
+                  pageNum = meta.totalPages - 4 + i;
+                } else {
+                  pageNum = meta.page - 2 + i;
+                }
+
+                return (
+                  <Button
+                    key={pageNum}
+                    variant={meta.page === pageNum ? "default" : "outline"}
+                    size="icon"
+                    className="h-8 w-8 text-xs"
+                    onClick={() => fetchContacts(pageNum, activeTab)}>
+                    {pageNum}
+                  </Button>
+                );
+              })}
             </div>
+
             <Button
               variant="outline"
               size="sm"
+              className="h-8 gap-1"
               disabled={meta.page >= meta.totalPages}
               onClick={() => fetchContacts(meta.page + 1, activeTab)}>
-              Next
+              <span className="hidden xs:inline">Next</span>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8 hidden xs:flex"
+              disabled={meta.page >= meta.totalPages}
+              onClick={() => fetchContacts(meta.totalPages, activeTab)}
+              title="Last Page">
+              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-4 w-4 -ml-2" />
             </Button>
           </div>
-        )}
+        </div>
       </Card>
 
       {/* Sequence Selection Modal */}
