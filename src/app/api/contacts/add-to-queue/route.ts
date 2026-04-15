@@ -191,7 +191,7 @@ export async function POST(request: Request) {
             scheduledAt, // adjusted_scheduled_at should be the scheduled time, not current time
             templateInfo.position,
             contact.timezone || 'UTC',
-            contact.country_code || 'US'
+            contact.country_code || null
           ]
         );
 

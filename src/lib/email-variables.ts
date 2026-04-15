@@ -347,23 +347,101 @@ export function getVariableByKey(key: string): EmailVariable | undefined {
 }
 
 /**
- * Fetch country name from country_timezones table by country code
+ * In-memory fallback map for common country codes → full names.
+ * Used when the country_timezones table is unavailable or missing a code.
+ */
+const COUNTRY_NAME_FALLBACK: Record<string, string> = {
+  US: "United States",
+  GB: "United Kingdom",
+  IN: "India",
+  CA: "Canada",
+  AU: "Australia",
+  DE: "Germany",
+  FR: "France",
+  JP: "Japan",
+  SG: "Singapore",
+  AE: "United Arab Emirates",
+  SA: "Saudi Arabia",
+  BR: "Brazil",
+  MX: "Mexico",
+  ZA: "South Africa",
+  NZ: "New Zealand",
+  KR: "South Korea",
+  CN: "China",
+  IT: "Italy",
+  ES: "Spain",
+  NL: "Netherlands",
+  CH: "Switzerland",
+  SE: "Sweden",
+  NO: "Norway",
+  DK: "Denmark",
+  FI: "Finland",
+  BE: "Belgium",
+  AT: "Austria",
+  PL: "Poland",
+  CZ: "Czech Republic",
+  GR: "Greece",
+  PT: "Portugal",
+  IE: "Ireland",
+  TR: "Turkey",
+  RU: "Russia",
+  TH: "Thailand",
+  MY: "Malaysia",
+  PH: "Philippines",
+  ID: "Indonesia",
+  VN: "Vietnam",
+  HK: "Hong Kong",
+  TW: "Taiwan",
+  AR: "Argentina",
+  CO: "Colombia",
+  PE: "Peru",
+  CL: "Chile",
+  EG: "Egypt",
+  NG: "Nigeria",
+  KE: "Kenya",
+  MA: "Morocco",
+  QA: "Qatar",
+  KW: "Kuwait",
+  BH: "Bahrain",
+  OM: "Oman",
+  JO: "Jordan",
+  LB: "Lebanon",
+  IL: "Israel",
+  PK: "Pakistan",
+  BD: "Bangladesh",
+  LK: "Sri Lanka",
+  NP: "Nepal",
+  VE: "Venezuela",
+  MU: "Mauritius",
+};
+
+/**
+ * Fetch country name from country_timezones table by country code.
+ * Falls back to the in-memory map if the DB lookup fails or returns nothing.
  * @param countryCode - Two-letter country code (e.g., 'US', 'IN', 'GB')
  * @returns Full country name or empty string if not found
  */
 export async function getCountryName(countryCode: string): Promise<string> {
   if (!countryCode) return "";
 
+  const code = countryCode.toUpperCase();
+
   try {
     const result = await executeQuery(
       `SELECT country_name FROM country_timezones WHERE country_code = $1 LIMIT 1`,
-      [countryCode.toUpperCase()]
+      [code]
     );
 
-    return result && result.length > 0 ? result[0].country_name : "";
+    if (result && result.length > 0) {
+      return result[0].country_name;
+    }
+
+    // DB returned nothing — fall back to the in-memory map
+    return COUNTRY_NAME_FALLBACK[code] || "";
   } catch (error) {
     console.error(`Error fetching country name for code ${countryCode}:`, error);
-    return "";
+    // Fall back to the in-memory map so {{region}} is never left empty due to a DB error
+    return COUNTRY_NAME_FALLBACK[code] || "";
   }
 }
 
