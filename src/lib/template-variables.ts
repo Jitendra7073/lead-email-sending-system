@@ -2,6 +2,8 @@
  * Template Variables System
  * Defines available variables for email templates with their metadata
  */
+ 
+import { COUNTRY_TIMEZONES } from "./data/country-timezones"
 
 export interface TemplateVariable {
   key: string
@@ -149,9 +151,26 @@ export function replaceTemplateVariables(
   result = result.replace(/\{\{date\}\}/gi, formatDate())
 
   // Replace region
-  if (values.region) {
-    result = result.replace(/\{\{region\}\}/gi, values.region)
+  const regionInput = values.region || ""
+  let regionDisplay = regionInput
+
+  // If it's a code (length <= 3), try to resolve it from static mapping
+  if (regionDisplay.length <= 3) {
+    const staticCountry = COUNTRY_TIMEZONES.find(
+      c => c.country_code.toUpperCase() === regionInput.toUpperCase()
+    )
+    if (staticCountry) {
+      regionDisplay = staticCountry.country_name
+    } else if (regionInput.toUpperCase() === "US") {
+      regionDisplay = "United States"
+    } else if (regionInput.toUpperCase() === "IN") {
+      regionDisplay = "India"
+    } else if (!regionInput) {
+      regionDisplay = "United States" // Preview default
+    }
   }
+  
+  result = result.replace(/\{\{region\}\}/gi, regionDisplay)
 
   return result
 }

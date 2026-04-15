@@ -72,8 +72,8 @@ export async function sendEmailWithNodemailer(
     region: context?.region,
   };
 
-  const processedSubject = replaceVariables(subject, variableContext);
-  const processedHtmlContent = replaceVariables(htmlContent, variableContext);
+  const processedSubject = await replaceVariables(subject, variableContext);
+  const processedHtmlContent = await replaceVariables(htmlContent, variableContext);
 
   // 4. Configure Nodemailer transport
   // IMPORTANT: Always authenticate with the main email (SMTP auth user), NOT the alias

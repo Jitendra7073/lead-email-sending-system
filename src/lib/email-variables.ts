@@ -4,6 +4,7 @@
  */
 
 import { executeQuery } from "./db/postgres";
+import { COUNTRY_TIMEZONES } from "./data/country-timezones";
 
 export interface EmailVariable {
   key: string;
@@ -246,17 +247,17 @@ export function getCurrentDate(): string {
 /**
  * Replace variables in template with actual values
  */
-export function replaceVariables(
+export async function replaceVariables(
   content: string,
   context: VariableContext,
-): string {
+): Promise<string> {
   if (!content) return "";
 
   let result = content;
 
   // Replace each variable
   for (const variable of EMAIL_VARIABLES) {
-    const value = getVariableValue(variable.key, context);
+    const value = await getVariableValue(variable.key, context);
     if (value !== null) {
       // Use global regex to replace all occurrences
       const regex = new RegExp(escapeRegex(variable.key), "g");
@@ -270,10 +271,10 @@ export function replaceVariables(
 /**
  * Get value for a specific variable
  */
-function getVariableValue(
+async function getVariableValue(
   key: string,
   context: VariableContext,
-): string | null {
+): Promise<string | null> {
   switch (key) {
     case "{{sender_name}}":
       return context.sender_name || "Team";
@@ -297,7 +298,30 @@ function getVariableValue(
       return context.date || getCurrentDate();
 
     case "{{region}}":
-      return context.region || "";
+      const regionCode = context.region || "";
+      
+      // If it's already a full name (longer than 3 chars), return it
+      if (regionCode.length > 3) return regionCode;
+      
+      // Attempt to resolve country code to full name
+      if (regionCode) {
+        // 1. Try database first
+        const fullName = await getCountryName(regionCode);
+        if (fullName) return fullName;
+        
+        // 2. Try static list fallback
+        const staticCountry = COUNTRY_TIMEZONES.find(
+          c => c.country_code.toUpperCase() === regionCode.toUpperCase()
+        );
+        if (staticCountry) return staticCountry.country_name;
+      }
+      
+      // 3. Last fallback: use United States as default if missing or unresolved
+      // (per user requirement "fallback should be United States")
+      if (regionCode.toUpperCase() === "US") return "United States";
+      if (regionCode.toUpperCase() === "IN") return "India";
+      
+      return regionCode || "United States";
 
     default:
       return null;

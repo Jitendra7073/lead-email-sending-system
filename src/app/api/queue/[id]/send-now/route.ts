@@ -19,7 +19,8 @@ export async function POST(request: Request, context: RouteContext) {
       SELECT q.*,
              s.app_password, s.email as sender_email, s.smtp_host, s.smtp_port, s.smtp_user, s.name as sender_name,
              st.url as website_url,
-             c.country_code
+             c.country_code,
+             st.country as site_country
       FROM email_queue q
       LEFT JOIN email_senders s ON q.sender_id = s.id
       LEFT JOIN contacts c ON q.contact_id = c.id
@@ -83,8 +84,9 @@ export async function POST(request: Request, context: RouteContext) {
 
     // 4. Send the email
     try {
-      // Fetch country name if country_code is available
-      const countryName = item.country_code ? await getCountryName(item.country_code) : "";
+      // Fetch country name if country_code or site_country is available
+      const countryCodeInput = item.country_code || item.site_country;
+      const countryName = countryCodeInput ? await getCountryName(countryCodeInput) : "";
 
       const info = await sendEmailWithNodemailer(
         senderCredentials.id || item.sender_id,

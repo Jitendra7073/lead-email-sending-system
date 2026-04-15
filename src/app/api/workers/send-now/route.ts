@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { executeQuery } from '@/lib/db/postgres';
 import nodemailer from 'nodemailer';
+import { replaceVariables, getCountryName } from '@/lib/email-variables';
 
 export async function POST(request: Request) {
   try {
@@ -86,12 +87,25 @@ export async function POST(request: Request) {
     // Send emails to each contact
     for (const contact of contactsResult) {
       try {
+        // Prepare context for variable replacement
+        // Fetch country name if country_code is available
+        const countryName = contact.country_code ? await getCountryName(contact.country_code) : "";
+        
+        const variableContext = {
+          sender_name: sender.name,
+          receiver_email: contact.value,
+          region: countryName
+        };
+
+        const processedSubject = await replaceVariables(template.subject, variableContext);
+        const processedHtml = await replaceVariables(template.html_content, variableContext);
+
         // Send email
         const info = await transporter.sendMail({
           from: `"${sender.name}" <${sender.email}>`,
           to: contact.value,
-          subject: template.subject,
-          html: template.html_content,
+          subject: processedSubject,
+          html: processedHtml,
         });
 
         // Log successful send
