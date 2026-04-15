@@ -25,6 +25,8 @@ import {
   TrendingUp,
   XCircle,
   Pencil,
+  Filter,
+  Copy,
 } from "lucide-react";
 import {
   Table,
@@ -153,6 +155,10 @@ export default function ContactsPage() {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [bulkActionLoading, setBulkActionLoading] = React.useState(false);
 
+  // Contact list filters
+  const [filterHideInvalid, setFilterHideInvalid] = React.useState(false);
+  const [filterHideDuplicates, setFilterHideDuplicates] = React.useState(false);
+
   // Edit modal state
   const [showEditModal, setShowEditModal] = React.useState(false);
   const [editingContact, setEditingContact] = React.useState<Contact | null>(
@@ -255,10 +261,11 @@ export default function ContactsPage() {
   };
 
   const handleSelectAll = () => {
-    if (selectedIds.size === contacts.length) {
+    const selectableIds = displayContacts.map((c) => c.id);
+    if (selectedIds.size === selectableIds.length && selectableIds.every((id) => selectedIds.has(id))) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(contacts.map((c) => c.id)));
+      setSelectedIds(new Set(selectableIds));
     }
   };
 
@@ -819,6 +826,45 @@ export default function ContactsPage() {
     }
   };
 
+  // Apply active filters to the contact list
+  const displayContacts = React.useMemo(() => {
+    let list = contacts;
+
+    if (filterHideInvalid) {
+      list = list.filter((c) => c.verification_status !== "invalid");
+    }
+
+    if (filterHideDuplicates) {
+      const seen = new Set<string>();
+      list = list.filter((c) => {
+        const key = c.value.toLowerCase().trim();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    return list;
+  }, [contacts, filterHideInvalid, filterHideDuplicates]);
+
+  // Count how many contacts are hidden by the active filters
+  const hiddenByFilters = contacts.length - displayContacts.length;
+
+  // Ids of duplicate contacts (same email as an earlier entry)
+  const duplicateIds = React.useMemo(() => {
+    const seen = new Set<string>();
+    const dupes = new Set<number>();
+    for (const c of contacts) {
+      const key = c.value.toLowerCase().trim();
+      if (seen.has(key)) {
+        dupes.add(c.id);
+      } else {
+        seen.add(key);
+      }
+    }
+    return dupes;
+  }, [contacts]);
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {error && (
@@ -878,8 +924,9 @@ export default function ContactsPage() {
       <Card>
         <CardHeader className="px-4 sm:px-6">
           <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between border-b pb-4 -mx-4 sm:-mx-6 px-4 sm:px-6">
-            <div className="relative w-full max-w-sm flex gap-2 order-2 md:order-1">
-              <div className="relative flex-1">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 order-2 md:order-1 w-full md:w-auto">
+              {/* Search input */}
+              <div className="relative w-full max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   className="w-full bg-muted/40 border border-input rounded-lg pl-10 pr-10 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
@@ -899,15 +946,45 @@ export default function ContactsPage() {
                   </button>
                 )}
               </div>
-              {/* <Button
-                size="sm"
-                variant="outline"
-                className="gap-2"
-                onClick={handleSearch}
-              >
-                <Search className="h-4 w-4" />
-                Search
-              </Button> */}
+
+              {/* Filter toggles */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => setFilterHideInvalid((v) => !v)}
+                  title={filterHideInvalid ? "Showing valid emails only" : "Click to hide invalid emails"}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+                    filterHideInvalid
+                      ? "bg-red-500/10 border-red-500/40 text-red-600 dark:text-red-400"
+                      : "border-input text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  }`}>
+                  <XCircle className="h-3.5 w-3.5" />
+                  Hide Invalid
+                  {filterHideInvalid && (
+                    <span className="ml-0.5 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-1 text-[10px] font-bold">ON</span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setFilterHideDuplicates((v) => !v)}
+                  title={filterHideDuplicates ? "Showing unique emails only" : "Click to hide duplicate emails"}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
+                    filterHideDuplicates
+                      ? "bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                      : "border-input text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  }`}>
+                  <Copy className="h-3.5 w-3.5" />
+                  Hide Duplicates
+                  {filterHideDuplicates && (
+                    <span className="ml-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded px-1 text-[10px] font-bold">ON</span>
+                  )}
+                </button>
+
+                {hiddenByFilters > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {hiddenByFilters} hidden
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap order-1 md:order-2 w-full md:w-auto justify-end">
               {selectedIds.size > 0 && (
@@ -1000,8 +1077,8 @@ export default function ContactsPage() {
                     <TableHead className="w-[50px] sticky left-0 bg-background">
                       <Checkbox
                         checked={
-                          contacts.length > 0 &&
-                          selectedIds.size === contacts.length
+                          displayContacts.length > 0 &&
+                          displayContacts.every((c) => selectedIds.has(c.id))
                         }
                         onCheckedChange={handleSelectAll}
                       />
@@ -1034,20 +1111,35 @@ export default function ContactsPage() {
                         ))}
                       </TableRow>
                     ))
-                  ) : contacts.length === 0 ? (
+                  ) : displayContacts.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} className="h-64 text-center">
                         <div className="flex flex-col items-center gap-2 opacity-40">
                           <Users className="h-12 w-12" />
                           <p className="font-medium text-lg">
-                            No contacts found
+                            {contacts.length > 0
+                              ? "All contacts hidden by active filters"
+                              : "No contacts found"}
                           </p>
+                          {contacts.length > 0 && (
+                            <p className="text-sm">
+                              {hiddenByFilters} contact{hiddenByFilters !== 1 ? "s" : ""} hidden — turn off a filter to show them
+                            </p>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
                   ) : (
-                    contacts.map((contact) => (
-                      <TableRow key={contact.id}>
+                    displayContacts.map((contact) => (
+                      <TableRow
+                        key={contact.id}
+                        className={
+                          contact.verification_status === "invalid"
+                            ? "opacity-60"
+                            : duplicateIds.has(contact.id)
+                            ? "opacity-75"
+                            : undefined
+                        }>
                         <TableCell className="sticky left-0 bg-background">
                           <Checkbox
                             checked={selectedIds.has(contact.id)}
@@ -1057,6 +1149,13 @@ export default function ContactsPage() {
                         <TableCell className="font-medium">
                           <div className="flex flex-col sm:flex-row sm:items-center gap-1">
                             <span className="break-all">{contact.value}</span>
+                            {/* Duplicate badge */}
+                            {duplicateIds.has(contact.id) && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 flex-shrink-0">
+                                <Copy className="h-2.5 w-2.5" />
+                                Duplicate
+                              </span>
+                            )}
                             {/* Show type inline on mobile */}
                             <div className="flex items-center gap-1 sm:hidden">
                               <TypeIcon type={contact.type} />

@@ -173,9 +173,9 @@ export async function POST(request: Request) {
           }
         }
 
-        // Get the contact email and timezone
+        // Get the contact email, timezone, and country code
         const contactInfo = await client.query(
-          `SELECT value, timezone FROM contacts WHERE id = $1`,
+          `SELECT value, timezone, country_code FROM contacts WHERE id = $1`,
           [contactId]
         );
 
@@ -186,6 +186,7 @@ export async function POST(request: Request) {
 
         const recipientEmail = contactInfo.rows[0].value;
         const recipientTimezone = contactInfo.rows[0].timezone || 'UTC';
+        const recipientCountryCode = contactInfo.rows[0].country_code || null;
 
         // Insert into queue
         const queueResult = await client.query(
@@ -208,7 +209,7 @@ export async function POST(request: Request) {
             status,
             item.position,
             recipientTimezone,
-            null, // country_code - can be enriched later
+            recipientCountryCode, // country_code from contact record
             dependencySatisfied,
             null // depends_on_queue_id - will be set after first email is queued
           ]
