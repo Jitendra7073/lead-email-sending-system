@@ -10,6 +10,9 @@ export async function GET(request: Request) {
     const country_code = searchParams.get('country_code');
     const timezone = searchParams.get('timezone');
     const site_id = searchParams.get('site_id');
+    const site_url = searchParams.get('site_url');
+    const verification_status = searchParams.get('verification_status');
+    const has_site_id = searchParams.get('has_site_id');
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
     const offset = (page - 1) * limit;
@@ -18,8 +21,8 @@ export async function GET(request: Request) {
     let query = `
       SELECT DISTINCT ON (c.id)
         c.*,
-        s.url as site_url,
-        s.country,
+        COALESCE(s.url, c.source_page) as site_url,
+        COALESCE(s.country, c.country_code) as country,
         s.is_wordpress,
         s.timezone as detected_timezone,
         ev.status as verification_status,
@@ -47,10 +50,11 @@ export async function GET(request: Request) {
       params.push(type);
     }
 
-    // Country code filter (via sites table)
+    // Country code filter (via sites table or contacts.country_code)
     if (country_code) {
-      query += ` AND s.country = $${paramIndex++}`;
+      query += ` AND (s.country = $${paramIndex} OR c.country_code = $${paramIndex})`;
       params.push(country_code);
+      paramIndex++;
     }
 
     // Timezone filter (exact match or partial)
@@ -64,6 +68,31 @@ export async function GET(request: Request) {
     if (site_id) {
       query += ` AND c.site_id = $${paramIndex++}`;
       params.push(site_id);
+    }
+
+    // Site URL filter
+    if (site_url) {
+      query += ` AND (s.url = $${paramIndex} OR c.source_page = $${paramIndex})`;
+      params.push(site_url);
+      paramIndex++;
+    }
+
+    // Verification status filter
+    if (verification_status) {
+      if (verification_status === 'unverified') {
+        query += ` AND ev.status IS NULL`;
+      } else {
+        query += ` AND ev.status = $${paramIndex}`;
+        params.push(verification_status);
+        paramIndex++;
+      }
+    }
+
+    // Has site_id filter
+    if (has_site_id === 'true') {
+      query += ` AND c.site_id IS NOT NULL`;
+    } else if (has_site_id === 'false') {
+      query += ` AND c.site_id IS NULL`;
     }
 
     // Get total count for pagination

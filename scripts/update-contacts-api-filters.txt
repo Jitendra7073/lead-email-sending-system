@@ -1,0 +1,53 @@
+Add these new filter parameters after line 13 in src/app/api/contacts/route.ts:
+
+    const site_url = searchParams.get('site_url');
+    const verification_status = searchParams.get('verification_status');
+    const has_site_id = searchParams.get('has_site_id');
+    const date_from = searchParams.get('date_from');
+    const date_to = searchParams.get('date_to');
+
+Then update the country_code filter (around line 50) to check both tables:
+    if (country_code) {
+      query += ` AND (s.country = $${paramIndex} OR c.country_code = $${paramIndex})`;
+      params.push(country_code);
+      paramIndex++;
+    }
+
+Add these new filters after the site_id filter (around line 65):
+
+    // Site URL filter
+    if (site_url) {
+      query += ` AND (s.url = $${paramIndex} OR c.source_page = $${paramIndex})`;
+      params.push(site_url);
+      paramIndex++;
+    }
+
+    // Verification status filter
+    if (verification_status) {
+      if (verification_status === 'unverified') {
+        query += ` AND ev.status IS NULL`;
+      } else {
+        query += ` AND ev.status = $${paramIndex}`;
+        params.push(verification_status);
+        paramIndex++;
+      }
+    }
+
+    // Has site_id filter
+    if (has_site_id === 'true') {
+      query += ` AND c.site_id IS NOT NULL`;
+    } else if (has_site_id === 'false') {
+      query += ` AND c.site_id IS NULL`;
+    }
+
+    // Date range filters
+    if (date_from) {
+      query += ` AND c.created_at >= $${paramIndex}`;
+      params.push(date_from);
+      paramIndex++;
+    }
+    if (date_to) {
+      query += ` AND c.created_at <= $${paramIndex}`;
+      params.push(date_to + ' 23:59:59');
+      paramIndex++;
+    }

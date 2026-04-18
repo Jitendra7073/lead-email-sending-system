@@ -27,6 +27,9 @@ import {
   Pencil,
   Filter,
   Copy,
+  Plus,
+  Upload,
+  UserPlus,
 } from "lucide-react";
 import {
   Table,
@@ -42,6 +45,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatDate } from "@/lib/utils";
 import {
   Dialog,
@@ -62,12 +72,12 @@ interface Contact {
   source_page?: string;
   created_at: string;
   verification_status?:
-    | "valid"
-    | "invalid"
-    | "risky"
-    | "unverified"
-    | "checking"
-    | null;
+  | "valid"
+  | "invalid"
+  | "risky"
+  | "unverified"
+  | "checking"
+  | null;
   verification_reason?: string | null;
   verification_checked_at?: string | null;
   overall_score?: number | null;
@@ -155,9 +165,20 @@ export default function ContactsPage() {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [bulkActionLoading, setBulkActionLoading] = React.useState(false);
 
-  // Contact list filters
-  const [filterHideInvalid, setFilterHideInvalid] = React.useState(false);
-  const [filterHideDuplicates, setFilterHideDuplicates] = React.useState(false);
+  // Filters
+  const [showFilters, setShowFilters] = React.useState(false);
+  const [filters, setFilters] = React.useState({
+    verification_status: "" as "" | "valid" | "invalid" | "risky" | "unverified",
+    country: "",
+    site_url: "",
+    has_site_id: "" as "" | "yes" | "no",
+    hide_invalid: false,
+    hide_duplicates: false,
+  });
+  const [availableCountries, setAvailableCountries] = React.useState<string[]>([]);
+  const [availableSites, setAvailableSites] = React.useState<Array<{ url: string; count: number }>>([]);
+
+  // Removed deprecated filter state - now using unified filters state
 
   // Edit modal state
   const [showEditModal, setShowEditModal] = React.useState(false);
@@ -168,6 +189,54 @@ export default function ContactsPage() {
     value: "",
   });
   const [updateLoading, setUpdateLoading] = React.useState(false);
+
+  // Add contact modal state
+  const [showAddModal, setShowAddModal] = React.useState(false);
+  const [addStep, setAddStep] = React.useState<"site" | "contact">("site");
+  const [addSiteForm, setAddSiteForm] = React.useState({ url: "", country: "" });
+  const [addSiteData, setAddSiteData] = React.useState<{ id: number; url: string; country: string } | null>(null);
+  const [addForm, setAddForm] = React.useState({
+    type: "email" as "email" | "phone" | "linkedin",
+    value: "",
+    country_code: "",
+    source_page: "",
+  });
+  const [addLoading, setAddLoading] = React.useState(false);
+  const [addError, setAddError] = React.useState<string | null>(null);
+
+  const resetAddForm = () => {
+    setAddStep("site");
+    setAddSiteForm({ url: "", country: "" });
+    setAddSiteData(null);
+    setAddForm({ type: "email", value: "", country_code: "", source_page: "" });
+    setAddError(null);
+  };
+
+  // Bulk add modal state
+  const [showBulkModal, setShowBulkModal] = React.useState(false);
+  const [bulkMode, setBulkMode] = React.useState<"simple" | "advanced">("simple");
+  const [bulkStep, setBulkStep] = React.useState<"mode" | "site" | "import">("mode");
+  const [bulkSiteForm, setBulkSiteForm] = React.useState({ url: "", country: "" });
+  const [bulkSiteData, setBulkSiteData] = React.useState<{ id: number; url: string; country: string } | null>(null);
+  const [bulkType, setBulkType] = React.useState<"email" | "phone" | "linkedin">("email");
+  const [bulkText, setBulkText] = React.useState("");
+  const [bulkFile, setBulkFile] = React.useState<File | null>(null);
+  const [bulkLoading, setBulkLoading] = React.useState(false);
+  const [bulkResult, setBulkResult] = React.useState<{
+    imported: number;
+    failed: number;
+    errors: string[];
+  } | null>(null);
+
+  const resetBulkForm = () => {
+    setBulkMode("simple");
+    setBulkStep("mode");
+    setBulkSiteForm({ url: "", country: "" });
+    setBulkSiteData(null);
+    setBulkText("");
+    setBulkFile(null);
+    setBulkResult(null);
+  };
 
   // Sequence modal state
   const [showSequenceModal, setShowSequenceModal] = React.useState(false);
@@ -216,8 +285,19 @@ export default function ContactsPage() {
       const searchParam = searchQuery
         ? `&search=${encodeURIComponent(searchQuery)}`
         : "";
+
+      // Build filter params
+      const filterParams = new URLSearchParams();
+      if (filters.verification_status) filterParams.append("verification_status", filters.verification_status);
+      if (filters.country) filterParams.append("country_code", filters.country);
+      if (filters.site_url) filterParams.append("site_url", filters.site_url);
+      if (filters.has_site_id === "yes") filterParams.append("has_site_id", "true");
+      if (filters.has_site_id === "no") filterParams.append("has_site_id", "false");
+
+      const filterString = filterParams.toString() ? `&${filterParams.toString()}` : "";
+
       const res = await fetch(
-        `/api/contacts?page=${page}&limit=20${typeParam}${searchParam}`,
+        `/api/contacts?page=${page}&limit=20${typeParam}${searchParam}${filterString}`,
       );
       const json = await res.json();
       if (json.success) {
@@ -246,6 +326,38 @@ export default function ContactsPage() {
     fetchContacts(1, activeTab);
     setSelectedIds(new Set());
   }, [activeTab]);
+
+  // Refetch when filters change
+  React.useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      fetchContacts(1, activeTab);
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [filters]);
+
+  // Fetch filter options on mount
+  React.useEffect(() => {
+    async function fetchFilterOptions() {
+      try {
+        // Fetch unique countries
+        const countriesRes = await fetch("/api/contacts/filter-options?field=country");
+        const countriesJson = await countriesRes.json();
+        if (countriesJson.success) {
+          setAvailableCountries(countriesJson.data);
+        }
+
+        // Fetch unique sites
+        const sitesRes = await fetch("/api/contacts/filter-options?field=site_url");
+        const sitesJson = await sitesRes.json();
+        if (sitesJson.success) {
+          setAvailableSites(sitesJson.data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch filter options:", err);
+      }
+    }
+    fetchFilterOptions();
+  }, []);
 
   // Debounce search - auto-search after user stops typing
   React.useEffect(() => {
@@ -643,11 +755,11 @@ export default function ContactsPage() {
             const result = json.results.find((r: any) => r.contact_id === c.id);
             return result
               ? {
-                  ...c,
-                  verification_status: result.status,
-                  verification_reason: result.reason,
-                  verification_checked_at: result.checked_at,
-                }
+                ...c,
+                verification_status: result.status,
+                verification_reason: result.reason,
+                verification_checked_at: result.checked_at,
+              }
               : c;
           }),
         );
@@ -826,15 +938,199 @@ export default function ContactsPage() {
     }
   };
 
+  const handleSiteLookup = async () => {
+    if (!addSiteForm.url.trim()) {
+      setAddError("Site URL is required");
+      return;
+    }
+    if (!addSiteForm.country.trim()) {
+      setAddError("Country is required");
+      return;
+    }
+    setAddLoading(true);
+    setAddError(null);
+    try {
+      const res = await fetch("/api/sites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: addSiteForm.url.trim(),
+          country: addSiteForm.country.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setAddSiteData(json.data);
+        // Pre-fill contact step from site data
+        setAddForm((f) => ({
+          ...f,
+          source_page: json.data.url,
+          country_code: (json.data.country || addSiteForm.country).toUpperCase(),
+        }));
+        setAddStep("contact");
+      } else {
+        setAddError(json.error || "Failed to resolve site");
+      }
+    } catch (err: any) {
+      setAddError(err.message);
+    } finally {
+      setAddLoading(false);
+    }
+  };
+
+  const handleAddContact = async () => {
+    if (!addForm.value.trim()) {
+      setAddError("Contact value is required");
+      return;
+    }
+    setAddLoading(true);
+    setAddError(null);
+    try {
+      const res = await fetch("/api/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: addForm.type,
+          value: addForm.value.trim(),
+          site_id: addSiteData?.id,
+          country_code: addForm.country_code.trim(),
+          source_page: addForm.source_page.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setShowAddModal(false);
+        resetAddForm();
+        fetchContacts(1, activeTab);
+      } else {
+        setAddError(json.error || "Failed to add contact");
+      }
+    } catch (err: any) {
+      setAddError(err.message);
+    } finally {
+      setAddLoading(false);
+    }
+  };
+
+  const handleBulkAdd = async () => {
+    setBulkLoading(true);
+    setBulkResult(null);
+
+    try {
+      // If a CSV file is selected, use the import API
+      if (bulkFile) {
+        const formData = new FormData();
+        formData.append("file", bulkFile);
+        // If simple mode, pass the site_id
+        if (bulkMode === "simple" && bulkSiteData) {
+          formData.append("site_id", bulkSiteData.id.toString());
+        }
+        const res = await fetch("/api/contacts/import", {
+          method: "POST",
+          body: formData,
+        });
+        const json = await res.json();
+        if (json.success) {
+          setBulkResult(json.data);
+          fetchContacts(1, activeTab);
+        } else {
+          setBulkResult({ imported: 0, failed: 0, errors: [json.error] });
+        }
+        return;
+      }
+
+      // Otherwise parse the pasted text — one value per line
+      const lines = bulkText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+      if (lines.length === 0) {
+        setBulkResult({ imported: 0, failed: 0, errors: ["No contacts entered"] });
+        return;
+      }
+
+      let imported = 0;
+      let failed = 0;
+      const errors: string[] = [];
+
+      await Promise.all(
+        lines.map(async (value, idx) => {
+          try {
+            const res = await fetch("/api/contacts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: bulkType,
+                value,
+                site_id: bulkSiteData?.id,
+                country_code: bulkSiteData?.country,
+                source_page: bulkSiteData?.url,
+              }),
+            });
+            const json = await res.json();
+            if (json.success) {
+              imported++;
+            } else {
+              failed++;
+              errors.push(`Line ${idx + 1} (${value}): ${json.error}`);
+            }
+          } catch (err: any) {
+            failed++;
+            errors.push(`Line ${idx + 1} (${value}): ${err.message}`);
+          }
+        }),
+      );
+
+      setBulkResult({ imported, failed, errors });
+      if (imported > 0) fetchContacts(1, activeTab);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const handleBulkSiteLookup = async () => {
+    if (!bulkSiteForm.url.trim()) {
+      setBulkResult({ imported: 0, failed: 0, errors: ["Site URL is required"] });
+      return;
+    }
+    if (!bulkSiteForm.country.trim()) {
+      setBulkResult({ imported: 0, failed: 0, errors: ["Country is required"] });
+      return;
+    }
+    setBulkLoading(true);
+    try {
+      const res = await fetch("/api/sites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: bulkSiteForm.url.trim(),
+          country: bulkSiteForm.country.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setBulkSiteData(json.data);
+        setBulkStep("import");
+      } else {
+        setBulkResult({ imported: 0, failed: 0, errors: [json.error || "Failed to resolve site"] });
+      }
+    } catch (err: any) {
+      setBulkResult({ imported: 0, failed: 0, errors: [err.message] });
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   // Apply active filters to the contact list
   const displayContacts = React.useMemo(() => {
     let list = contacts;
 
-    if (filterHideInvalid) {
+    if (filters.hide_invalid) {
       list = list.filter((c) => c.verification_status !== "invalid");
     }
 
-    if (filterHideDuplicates) {
+    if (filters.hide_duplicates) {
       const seen = new Set<string>();
       list = list.filter((c) => {
         const key = c.value.toLowerCase().trim();
@@ -845,7 +1141,7 @@ export default function ContactsPage() {
     }
 
     return list;
-  }, [contacts, filterHideInvalid, filterHideDuplicates]);
+  }, [contacts, filters.hide_invalid, filters.hide_duplicates]);
 
   // Count how many contacts are hidden by the active filters
   const hiddenByFilters = contacts.length - displayContacts.length;
@@ -882,6 +1178,30 @@ export default function ContactsPage() {
           <p className="text-muted-foreground">
             Manage your prospects and leads
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              resetBulkForm();
+              setShowBulkModal(true);
+            }}>
+            <Upload className="h-4 w-4" />
+            <span className="hidden sm:inline">Bulk Add</span>
+          </Button>
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => {
+              setAddError(null);
+              setAddForm({ type: "email", value: "", country_code: "", source_page: "" });
+              setShowAddModal(true);
+            }}>
+            <UserPlus className="h-4 w-4" />
+            <span className="hidden sm:inline">Add Contact</span>
+          </Button>
         </div>
       </div>
 
@@ -947,43 +1267,29 @@ export default function ContactsPage() {
                 )}
               </div>
 
-              {/* Filter toggles */}
+              {/* Advanced Filters Toggle */}
               <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  onClick={() => setFilterHideInvalid((v) => !v)}
-                  title={filterHideInvalid ? "Showing valid emails only" : "Click to hide invalid emails"}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
-                    filterHideInvalid
-                      ? "bg-red-500/10 border-red-500/40 text-red-600 dark:text-red-400"
-                      : "border-input text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                  }`}>
-                  <XCircle className="h-3.5 w-3.5" />
-                  Hide Invalid
-                  {filterHideInvalid && (
-                    <span className="ml-0.5 bg-red-500/20 text-red-600 dark:text-red-400 rounded px-1 text-[10px] font-bold">ON</span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => setFilterHideDuplicates((v) => !v)}
-                  title={filterHideDuplicates ? "Showing unique emails only" : "Click to hide duplicate emails"}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${
-                    filterHideDuplicates
-                      ? "bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400"
-                      : "border-input text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                  }`}>
-                  <Copy className="h-3.5 w-3.5" />
-                  Hide Duplicates
-                  {filterHideDuplicates && (
-                    <span className="ml-0.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded px-1 text-[10px] font-bold">ON</span>
-                  )}
-                </button>
-
                 {hiddenByFilters > 0 && (
                   <span className="text-xs text-muted-foreground">
                     {hiddenByFilters} hidden
                   </span>
                 )}
+
+                <button
+                  onClick={() => setShowFilters((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-xs font-medium transition-colors ${showFilters || Object.values(filters).some(v => v)
+                    ? "bg-primary/10 border-primary/40 text-primary"
+                    : "border-input text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                    }`}>
+                  <Filter className="h-3.5 w-3.5" />
+                  Filters
+                  {Object.values(filters).some(v => v) && (
+                    <span className="ml-0.5 bg-primary/20 text-primary rounded px-1 text-[10px] font-bold">
+                      {Object.values(filters).filter(v => v).length}
+                    </span>
+                  )}
+                  {showFilters ? <ChevronUp className="h-3.5 w-3.5 ml-0.5" /> : <ChevronDown className="h-3.5 w-3.5 ml-0.5" />}
+                </button>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap order-1 md:order-2 w-full md:w-auto justify-end">
@@ -1046,6 +1352,143 @@ export default function ContactsPage() {
               )}
             </div>
           </div>
+
+          {/* Advanced Filters Panel */}
+          {showFilters && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 pb-2 px-4 sm:px-6 border-b">
+              {/* Verification Status */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Verification Status</Label>
+                <Select
+                  value={filters.verification_status}
+                  onValueChange={(v) => setFilters({ ...filters, verification_status: v === " " ? "" : v as any })}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="All statuses" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=" ">All statuses</SelectItem>
+                    <SelectItem value="valid">Valid</SelectItem>
+                    <SelectItem value="invalid">Invalid</SelectItem>
+                    <SelectItem value="risky">Risky</SelectItem>
+                    <SelectItem value="unverified">Unverified</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Country */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Country</Label>
+                <Select
+                  value={filters.country}
+                  onValueChange={(v) => setFilters({ ...filters, country: v === " " ? "" : v })}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="All countries" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=" ">All countries</SelectItem>
+                    {availableCountries.map((country) => (
+                      <SelectItem key={country} value={country}>
+                        {country.toUpperCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Site URL */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Source Website</Label>
+                <Select
+                  value={filters.site_url}
+                  onValueChange={(v) => setFilters({ ...filters, site_url: v === " " ? "" : v })}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="All websites" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=" ">All websites</SelectItem>
+                    {availableSites.slice(0, 50).map((site) => (
+                      <SelectItem key={site.url} value={site.url}>
+                        {site.url} ({site.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Has Site ID */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Has Site Link</Label>
+                <Select
+                  value={filters.has_site_id}
+                  onValueChange={(v) => setFilters({ ...filters, has_site_id: v === " " ? "" : v as any })}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="All contacts" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=" ">All contacts</SelectItem>
+                    <SelectItem value="yes">Linked to site</SelectItem>
+                    <SelectItem value="no">Not linked</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Hide Invalid Checkbox */}
+              <div className="flex items-center space-x-2 pt-6">
+                <Checkbox
+                  id="hide-invalid"
+                  checked={filters.hide_invalid}
+                  onCheckedChange={(checked) => setFilters({ ...filters, hide_invalid: !!checked })}
+                />
+                <label
+                  htmlFor="hide-invalid"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                  Hide Invalid Emails
+                </label>
+              </div>
+
+              {/* Hide Duplicates Checkbox */}
+              <div className="flex items-center space-x-2 pt-6">
+                <Checkbox
+                  id="hide-duplicates"
+                  checked={filters.hide_duplicates}
+                  onCheckedChange={(checked) => setFilters({ ...filters, hide_duplicates: !!checked })}
+                />
+                <label
+                  htmlFor="hide-duplicates"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                  Hide Duplicate Contacts
+                </label>
+              </div>
+
+              {/* Clear Filters Button */}
+              <div className="flex items-end pt-6">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full"
+                  onClick={() => setFilters({
+                    verification_status: "",
+                    country: "",
+                    site_url: "",
+                    has_site_id: "",
+                    hide_invalid: false,
+                    hide_duplicates: false,
+                  })}>
+                  <X className="h-3.5 w-3.5 mr-1.5" />
+                  Clear All
+                </Button>
+              </div>
+
+              {/* Show hidden count */}
+              {hiddenByFilters > 0 && (
+                <div className="col-span-full">
+                  <p className="text-xs text-muted-foreground text-center py-2 bg-muted/30 rounded">
+                    {hiddenByFilters} contact{hiddenByFilters !== 1 ? 's' : ''} hidden by active filters
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <Tabs
@@ -1137,8 +1580,8 @@ export default function ContactsPage() {
                           contact.verification_status === "invalid"
                             ? "opacity-60"
                             : duplicateIds.has(contact.id)
-                            ? "opacity-75"
-                            : undefined
+                              ? "opacity-75"
+                              : undefined
                         }>
                         <TableCell className="sticky left-0 bg-background">
                           <Checkbox
@@ -1393,11 +1836,10 @@ export default function ContactsPage() {
               {sequences.map((sequence) => (
                 <div
                   key={sequence.id}
-                  className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-                    selectedSequence?.id === sequence.id
-                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                      : "border-border hover:border-primary/50 hover:bg-muted/50"
-                  }`}
+                  className={`border rounded-lg p-4 cursor-pointer transition-colors ${selectedSequence?.id === sequence.id
+                    ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                    : "border-border hover:border-primary/50 hover:bg-muted/50"
+                    }`}
                   onClick={() => setSelectedSequence(sequence)}>
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -1437,11 +1879,10 @@ export default function ContactsPage() {
                     </div>
                     <div className="ml-4">
                       <div
-                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                          selectedSequence?.id === sequence.id
-                            ? "border-primary bg-primary"
-                            : "border-muted-foreground"
-                        }`}>
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedSequence?.id === sequence.id
+                          ? "border-primary bg-primary"
+                          : "border-muted-foreground"
+                          }`}>
                         {selectedSequence?.id === sequence.id && (
                           <div className="w-2.5 h-2.5 rounded-full bg-white" />
                         )}
@@ -1591,13 +2032,12 @@ export default function ContactsPage() {
                         return (
                           <div
                             key={sequence.id}
-                            className={`border rounded-lg p-4 transition-colors ${
-                              !hasEmails
-                                ? "border-muted bg-muted/30 cursor-not-allowed opacity-60"
-                                : selectedSequenceForWizard?.id === sequence.id
-                                  ? "border-primary bg-primary/5 cursor-pointer"
-                                  : "border-border hover:border-primary/50 cursor-pointer"
-                            }`}
+                            className={`border rounded-lg p-4 transition-colors ${!hasEmails
+                              ? "border-muted bg-muted/30 cursor-not-allowed opacity-60"
+                              : selectedSequenceForWizard?.id === sequence.id
+                                ? "border-primary bg-primary/5 cursor-pointer"
+                                : "border-border hover:border-primary/50 cursor-pointer"
+                              }`}
                             onClick={() =>
                               hasEmails &&
                               setSelectedSequenceForWizard(sequence)
@@ -1650,7 +2090,7 @@ export default function ContactsPage() {
                               </div>
                               {hasEmails &&
                                 selectedSequenceForWizard?.id ===
-                                  sequence.id && (
+                                sequence.id && (
                                   <CheckCircle2 className="h-5 w-5 text-primary shrink-0" />
                                 )}
                             </div>
@@ -1734,25 +2174,24 @@ export default function ContactsPage() {
                     // Show local time in recipient's timezone
                     const localTime = countryInfo
                       ? scheduleDate.toLocaleString("en-US", {
-                          timeZone: countryInfo.default_timezone,
-                          hour: "2-digit",
-                          minute: "2-digit",
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                        })
+                        timeZone: countryInfo.default_timezone,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      })
                       : scheduleDate.toLocaleString();
 
                     return (
                       <div
                         key={`${email.contact_id}-${email.template_id}-${idx}`}
-                        className={`flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 p-3 border rounded-lg transition-colors ${
-                          hasWarning
-                            ? "border-amber-500/50 bg-amber-500/5"
-                            : email.status === "ready"
-                              ? "border-emerald-500/50 bg-emerald-500/5"
-                              : "border-border hover:bg-muted/50"
-                        }`}
+                        className={`flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3 p-3 border rounded-lg transition-colors ${hasWarning
+                          ? "border-amber-500/50 bg-amber-500/5"
+                          : email.status === "ready"
+                            ? "border-emerald-500/50 bg-emerald-500/5"
+                            : "border-border hover:bg-muted/50"
+                          }`}
                         onClick={() => !isEditing && setEditingEmail(email)}>
                         <div className="flex-1 space-y-2">
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -1857,7 +2296,7 @@ export default function ContactsPage() {
                             <p className="text-xs text-muted-foreground">
                               Your time:{" "}
                               {scheduleDate.toLocaleDateString() ===
-                              now.toLocaleDateString()
+                                now.toLocaleDateString()
                                 ? `Today ${scheduleDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
                                 : `${scheduleDate.toLocaleDateString()} ${scheduleDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
                             </p>
@@ -2121,6 +2560,361 @@ export default function ContactsPage() {
               Close
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Contact Modal - 2 Step Flow */}
+      <Dialog open={showAddModal} onOpenChange={(open) => { setShowAddModal(open); if (!open) resetAddForm(); }}>
+        <DialogContent className="w-[95%] mx-auto max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5" />
+              Add Contact {addStep === "site" ? "- Step 1: Site" : "- Step 2: Contact"}
+            </DialogTitle>
+            <DialogDescription>
+              {addStep === "site"
+                ? "First, enter the website where this contact was found."
+                : "Now add the contact details for this site."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {addError && (
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md mx-6">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              {addError}
+            </div>
+          )}
+
+          {/* Step 1: Site Details */}
+          {addStep === "site" && (
+            <div className="space-y-4 py-4 px-6">
+              <div className="space-y-2">
+                <Label>Site URL <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder="https://example.com"
+                  value={addSiteForm.url}
+                  onChange={(e) => setAddSiteForm({ ...addSiteForm, url: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  The website where you found this contact. We'll lookup or create a site record.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>Country <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder="e.g. US, GB, DE, IN"
+                  maxLength={3}
+                  value={addSiteForm.country}
+                  onChange={(e) => setAddSiteForm({ ...addSiteForm, country: e.target.value.toUpperCase() })}
+                  onKeyDown={(e) => e.key === "Enter" && handleSiteLookup()}
+                />
+                <p className="text-xs text-muted-foreground">
+                  2–3 letter ISO country code for this website.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Contact Details */}
+          {addStep === "contact" && (
+            <div className="space-y-4 py-4 px-6">
+              {addSiteData && (
+                <div className="bg-muted/50 p-3 rounded-lg text-sm">
+                  <p className="font-medium">Site: {addSiteData.url}</p>
+                  <p className="text-muted-foreground">Country: {addSiteData.country.toUpperCase()}</p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Type <span className="text-destructive">*</span></Label>
+                <Select
+                  value={addForm.type}
+                  onValueChange={(v) => setAddForm({ ...addForm, type: v as typeof addForm.type })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="email">Email</SelectItem>
+                    <SelectItem value="phone">Phone</SelectItem>
+                    <SelectItem value="linkedin">LinkedIn</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>
+                  {addForm.type === "email" ? "Email Address" : addForm.type === "phone" ? "Phone Number" : "LinkedIn URL"}{" "}
+                  <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  placeholder={
+                    addForm.type === "email" ? "name@example.com"
+                      : addForm.type === "phone" ? "+1 555 000 0000"
+                        : "https://linkedin.com/in/username"
+                  }
+                  value={addForm.value}
+                  onChange={(e) => setAddForm({ ...addForm, value: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddContact()}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="px-6 pb-6">
+            {addStep === "site" ? (
+              <>
+                <Button variant="outline" onClick={() => { setShowAddModal(false); resetAddForm(); }} disabled={addLoading}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSiteLookup} disabled={addLoading}>
+                  {addLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => { setAddStep("site"); setAddError(null); }} disabled={addLoading}>
+                  Back
+                </Button>
+                <Button onClick={handleAddContact} disabled={addLoading}>
+                  {addLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add Contact"}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Add Modal - 3 Step Flow */}
+      <Dialog
+        open={showBulkModal}
+        onOpenChange={(open) => {
+          setShowBulkModal(open);
+          if (!open) resetBulkForm();
+        }}>
+        <DialogContent className="w-[95%] mx-auto max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5" />
+              Bulk Add Contacts
+              {bulkStep === "mode" && " - Step 1: Choose Mode"}
+              {bulkStep === "site" && " - Step 2: Site Details"}
+              {bulkStep === "import" && " - Step 3: Import"}
+            </DialogTitle>
+            <DialogDescription>
+              {bulkStep === "mode" && "Choose how you want to bulk add contacts."}
+              {bulkStep === "site" && "Enter the website where these contacts were found."}
+              {bulkStep === "import" && "Paste contacts or upload a CSV file."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {bulkResult ? (
+            /* Result view */
+            <div className="space-y-4 py-4 px-6">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border p-4 text-center bg-emerald-500/5 border-emerald-500/30">
+                  <p className="text-xs text-emerald-600 mb-1">Imported</p>
+                  <p className="text-3xl font-bold text-emerald-600">{bulkResult.imported}</p>
+                </div>
+                <div className="rounded-lg border p-4 text-center bg-red-500/5 border-red-500/30">
+                  <p className="text-xs text-red-600 mb-1">Failed</p>
+                  <p className="text-3xl font-bold text-red-600">{bulkResult.failed}</p>
+                </div>
+              </div>
+              {bulkResult.errors.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground">Errors (first 10):</p>
+                  <div className="max-h-40 overflow-y-auto space-y-1">
+                    {bulkResult.errors.slice(0, 10).map((e, i) => (
+                      <p key={i} className="text-xs text-destructive bg-destructive/5 px-2 py-1 rounded">{e}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { resetBulkForm(); }}>Add More</Button>
+                <Button onClick={() => setShowBulkModal(false)}>Done</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <>
+              {/* Step 1: Choose Mode */}
+              {bulkStep === "mode" && (
+                <div className="space-y-4 py-4 px-6">
+                  <div className="grid gap-3">
+                    <button
+                      onClick={() => { setBulkMode("simple"); setBulkStep("site"); }}
+                      className={`p-4 border-2 rounded-lg text-left transition-colors hover:border-primary/50 ${bulkMode === "simple" ? "border-primary bg-primary/5" : "border-border"}`}>
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
+                          <Users className="h-5 w-5 text-blue-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold mb-1">Simple Mode</h3>
+                          <p className="text-sm text-muted-foreground">All contacts from one website. Paste a list or upload CSV without site column.</p>
+                        </div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setBulkMode("advanced"); setBulkStep("import"); }}
+                      className={`p-4 border-2 rounded-lg text-left transition-colors hover:border-primary/50 ${bulkMode === "advanced" ? "border-primary bg-primary/5" : "border-border"}`}>
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center shrink-0">
+                          <FileText className="h-5 w-5 text-purple-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-semibold mb-1">Advanced Mode</h3>
+                          <p className="text-sm text-muted-foreground">Contacts from multiple websites. Upload CSV with site_url column.</p>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Site Details (Simple Mode Only) */}
+              {bulkStep === "site" && (
+                <div className="space-y-4 py-4 px-6">
+                  <div className="space-y-2">
+                    <Label>Site URL <span className="text-destructive">*</span></Label>
+                    <Input
+                      placeholder="https://example.com"
+                      value={bulkSiteForm.url}
+                      onChange={(e) => setBulkSiteForm({ ...bulkSiteForm, url: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Country <span className="text-destructive">*</span></Label>
+                    <Input
+                      placeholder="e.g. US, GB, DE, IN"
+                      maxLength={3}
+                      value={bulkSiteForm.country}
+                      onChange={(e) => setBulkSiteForm({ ...bulkSiteForm, country: e.target.value.toUpperCase() })}
+                      onKeyDown={(e) => e.key === "Enter" && handleBulkSiteLookup()}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Import Contacts */}
+              {bulkStep === "import" && (
+                <div className="space-y-4 py-4 px-6">
+                  {bulkSiteData && (
+                    <div className="bg-muted/50 p-3 rounded-lg text-sm">
+                      <p className="font-medium">Site: {bulkSiteData.url}</p>
+                      <p className="text-muted-foreground">Country: {bulkSiteData.country.toUpperCase()}</p>
+                    </div>
+                  )}
+
+                  {bulkMode === "simple" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label>Contact Type</Label>
+                        <Select value={bulkType} onValueChange={(v) => setBulkType(v as typeof bulkType)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="email">Email</SelectItem>
+                            <SelectItem value="phone">Phone</SelectItem>
+                            <SelectItem value="linkedin">LinkedIn</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">Used for paste input. CSV auto-detects from headers.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Paste Contacts</Label>
+                        <textarea
+                          className="w-full min-h-[140px] rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-y font-mono"
+                          placeholder={bulkType === "email" ? "alice@example.com\nbob@example.com" : bulkType === "phone" ? "+1 555 000 0001\n+1 555 000 0002" : "https://linkedin.com/in/alice"}
+                          value={bulkText}
+                          onChange={(e) => setBulkText(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">One contact per line.</p>
+                      </div>
+
+                      <div className="relative flex items-center gap-3">
+                        <div className="flex-1 border-t" />
+                        <span className="text-xs text-muted-foreground">or</span>
+                        <div className="flex-1 border-t" />
+                      </div>
+                    </>
+                  )}
+
+                  <div className="space-y-2">
+                    <Label>Upload CSV File</Label>
+                    <div
+                      className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer hover:border-primary/50 ${bulkFile ? "border-primary/50 bg-primary/5" : "border-muted"}`}
+                      onClick={() => document.getElementById("bulk-csv-input")?.click()}>
+                      <input
+                        id="bulk-csv-input"
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          setBulkFile(f);
+                          if (f) setBulkText("");
+                        }}
+                      />
+                      {bulkFile ? (
+                        <div className="flex items-center justify-center gap-2 text-sm">
+                          <FileText className="h-4 w-4 text-primary" />
+                          <span className="font-medium">{bulkFile.name}</span>
+                          <button
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBulkFile(null);
+                              (document.getElementById("bulk-csv-input") as HTMLInputElement).value = "";
+                            }}>
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <Upload className="h-6 w-6 mx-auto text-muted-foreground" />
+                          <p className="text-sm text-muted-foreground">Click to upload CSV</p>
+                          <p className="text-xs text-muted-foreground">
+                            {bulkMode === "advanced" ? (
+                              <>Required columns: <code className="bg-muted px-1 rounded">type, value, site_url, country</code></>
+                            ) : (
+                              <>Columns: <code className="bg-muted px-1 rounded">type, value</code> or <code className="bg-muted px-1 rounded">email, phone, ...</code></>
+                            )}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Buttons */}
+              <DialogFooter className="px-6 pb-6">
+                {bulkStep === "mode" && (
+                  <Button variant="outline" onClick={() => setShowBulkModal(false)}>Cancel</Button>
+                )}
+                {bulkStep === "site" && (
+                  <>
+                    <Button variant="outline" onClick={() => setBulkStep("mode")} disabled={bulkLoading}>Back</Button>
+                    <Button onClick={handleBulkSiteLookup} disabled={bulkLoading}>
+                      {bulkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Next"}
+                    </Button>
+                  </>
+                )}
+                {bulkStep === "import" && (
+                  <>
+                    <Button variant="outline" onClick={() => bulkMode === "simple" ? setBulkStep("site") : setBulkStep("mode")} disabled={bulkLoading}>
+                      Back
+                    </Button>
+                    <Button onClick={handleBulkAdd} disabled={bulkLoading || (!bulkText.trim() && !bulkFile)}>
+                      {bulkLoading ? (
+                        <><Loader2 className="h-4 w-4 animate-spin mr-2" />Importing...</>
+                      ) : (
+                        <><Plus className="h-4 w-4 mr-2" />Import Contacts</>
+                      )}
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

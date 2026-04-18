@@ -9,7 +9,10 @@ export async function GET(
     const { id } = await params;
 
     const query = `
-      SELECT c.*, s.url as site_url, s.country, s.is_wordpress
+      SELECT c.*, 
+        COALESCE(s.url, c.source_page) as site_url,
+        COALESCE(s.country, c.country_code) as country,
+        s.is_wordpress
       FROM contacts c
       LEFT JOIN sites s ON c.site_id = s.id
       WHERE c.id = $1

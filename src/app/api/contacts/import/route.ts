@@ -15,6 +15,7 @@ export async function POST(request: Request) {
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File;
+    const siteIdParam = formData.get('site_id') as string | null;
 
     if (!file) {
       return NextResponse.json({
@@ -53,6 +54,10 @@ export async function POST(request: Request) {
 
     // Determine format based on headers
     const isExtendedFormat = headers.includes('email') && headers.includes('first_name');
+    const hasSiteUrl = headers.includes('site_url');
+
+    // Site cache for advanced mode (multiple sites)
+    const siteCache = new Map<string, number>();
 
     for (let i = 0; i < dataLines.length; i++) {
       try {
@@ -61,6 +66,7 @@ export async function POST(request: Request) {
         if (values.length === 0) continue;
 
         let contactData: any = {};
+        let resolvedSiteId: number | null = null;
 
         if (isExtendedFormat) {
           // Extended format: email,first_name,last_name,phone,linkedin_url,company_name,source_url,country_code
@@ -96,6 +102,39 @@ export async function POST(request: Request) {
             contactData.country_code = values[fieldMap.country_code].trim();
           }
 
+          // Handle site_url column for advanced mode
+          if (hasSiteUrl && fieldMap.site_url !== undefined && values[fieldMap.site_url]) {
+            const siteUrl = values[fieldMap.site_url].trim();
+            const country = contactData.country_code || 'unknown';
+            const cacheKey = `${siteUrl}|${country}`;
+
+            if (siteCache.has(cacheKey)) {
+              resolvedSiteId = siteCache.get(cacheKey)!;
+            } else {
+              // Lookup or create site
+              const existingSite = await client.query(
+                'SELECT id FROM sites WHERE url = $1 LIMIT 1',
+                [siteUrl]
+              );
+
+              if (existingSite.rows.length > 0) {
+                resolvedSiteId = existingSite.rows[0].id;
+              } else {
+                const newSite = await client.query(
+                  'INSERT INTO sites (url, country) VALUES ($1, $2) RETURNING id',
+                  [siteUrl, country.toLowerCase()]
+                );
+                resolvedSiteId = newSite.rows[0].id;
+              }
+
+              if (resolvedSiteId !== null) {
+                siteCache.set(cacheKey, resolvedSiteId);
+              }
+            }
+            contactData.site_id = resolvedSiteId;
+            contactData.source_page = siteUrl;
+          }
+
           // Skip if no contact info
           if (!contactData.value && !contactData.phone && !contactData.linkedin) {
             errors.push(`Row ${i + 2}: No contact information found`);
@@ -104,11 +143,56 @@ export async function POST(request: Request) {
           }
 
         } else {
-          // Simple format: type,value,source_page,site_id
+          // Simple format: type,value,source_page,site_id OR type,value,site_url,country
           contactData.type = values[0]?.trim() || 'email';
           contactData.value = values[1]?.trim();
-          contactData.source_page = values[2]?.trim() || null;
-          contactData.site_id = values[3] ? parseInt(values[3]) : null;
+
+          // Check if CSV has site_url column (advanced mode)
+          if (hasSiteUrl) {
+            const siteUrlIdx = headers.indexOf('site_url');
+            const countryIdx = headers.indexOf('country');
+
+            if (siteUrlIdx >= 0 && values[siteUrlIdx]) {
+              const siteUrl = values[siteUrlIdx].trim();
+              const country = (countryIdx >= 0 && values[countryIdx]) ? values[countryIdx].trim() : 'unknown';
+              const cacheKey = `${siteUrl}|${country}`;
+
+              if (siteCache.has(cacheKey)) {
+                resolvedSiteId = siteCache.get(cacheKey)!;
+              } else {
+                const existingSite = await client.query(
+                  'SELECT id FROM sites WHERE url = $1 LIMIT 1',
+                  [siteUrl]
+                );
+
+                if (existingSite.rows.length > 0) {
+                  resolvedSiteId = existingSite.rows[0].id;
+                } else {
+                  const newSite = await client.query(
+                    'INSERT INTO sites (url, country) VALUES ($1, $2) RETURNING id',
+                    [siteUrl, country.toLowerCase()]
+                  );
+                  resolvedSiteId = newSite.rows[0].id;
+                }
+
+                if (resolvedSiteId !== null) {
+                  siteCache.set(cacheKey, resolvedSiteId);
+                }
+              }
+              contactData.site_id = resolvedSiteId;
+              contactData.source_page = siteUrl;
+              contactData.country_code = country;
+            }
+          } else {
+            // Simple mode - use provided site_id param
+            contactData.source_page = values[2]?.trim() || null;
+            contactData.site_id = values[3] ? parseInt(values[3]) : (siteIdParam ? parseInt(siteIdParam) : null);
+          }
+        }
+
+        // Use site_id from param if not resolved from CSV
+        if (!contactData.site_id && siteIdParam) {
+          contactData.site_id = parseInt(siteIdParam);
         }
 
         // Validate required fields
@@ -148,7 +232,8 @@ export async function POST(request: Request) {
           INSERT INTO contacts (type, value, site_id, source_page, timezone, country_code)
           VALUES ($1, $2, $3, $4, $5, $6)
           ON CONFLICT (value, type) DO UPDATE SET
-            source_page = EXCLUDED.source_page,
+            source_page = COALESCE(EXCLUDED.source_page, contacts.source_page),
+            site_id = COALESCE(EXCLUDED.site_id, contacts.site_id),
             timezone = COALESCE(EXCLUDED.timezone, contacts.timezone),
             country_code = COALESCE(EXCLUDED.country_code, contacts.country_code),
             updated_at = NOW()
@@ -170,7 +255,9 @@ export async function POST(request: Request) {
             'phone',
             contactData.phone,
             contactData.site_id,
-            contactData.source_page
+            contactData.source_page,
+            null,
+            contactData.country_code
           ]);
           successCount++;
         }
@@ -181,7 +268,9 @@ export async function POST(request: Request) {
             'linkedin',
             contactData.linkedin,
             contactData.site_id,
-            contactData.source_page
+            contactData.source_page,
+            null,
+            contactData.country_code
           ]);
           successCount++;
         }
