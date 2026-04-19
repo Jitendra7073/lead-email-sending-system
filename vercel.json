@@ -1,8 +1,3 @@
 {
-  "crons": [
-    {
-      "path": "/api/workers/process-queue",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "crons": []
 }

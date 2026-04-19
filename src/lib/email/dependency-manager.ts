@@ -117,7 +117,7 @@ export async function buildDependencyChain(
           sequence_position: position,
           gap_days: gapDays,
           previous_scheduled_at: previousScheduledAt || undefined,
-          depends_on_email_id: previousQueueId,
+          depends_on_queue_id: previousQueueId,
           idempotency_key: idempotencyKey,
           send_time: '10:00' // Default send time
         };

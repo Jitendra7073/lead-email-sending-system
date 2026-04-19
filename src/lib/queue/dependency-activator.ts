@@ -61,7 +61,7 @@ export async function activateDependentEmails(
     // 2. Find all dependent emails (waiting on this one)
     const dependentsResult = await client.query(
       `SELECT * FROM email_queue
-       WHERE depends_on_email_id = $1
+       WHERE depends_on_queue_id = $1
        AND status IN ('dependency_pending', 'scheduled')
        ORDER BY sequence_position ASC`,
       [sentEmailId]
@@ -222,7 +222,7 @@ export async function getDependencyChain(rootEmailId: string): Promise<any[]> {
                c.level + 1,
                c.path || q.id
         FROM email_queue q
-        JOIN chain c ON q.depends_on_email_id = c.id
+        JOIN chain c ON q.depends_on_queue_id = c.id
         WHERE NOT q.id = ANY(c.path) -- Prevent cycles
       )
       SELECT * FROM chain
@@ -247,7 +247,7 @@ export async function cancelDependentEmails(parentEmailId: string, reason: strin
     // First, find all direct dependents
     const dependents = await executeQuery(
       `SELECT id FROM email_queue
-       WHERE depends_on_email_id = $1
+       WHERE depends_on_queue_id = $1
        AND status IN ('dependency_pending', 'scheduled', 'ready_to_send')`,
       [parentEmailId]
     );
@@ -289,10 +289,10 @@ export async function getDependencyStats(campaignId: string): Promise<{
   try {
     // Count chains (emails with dependents)
     const chainsResult = await executeQuery(
-      `SELECT COUNT(DISTINCT depends_on_email_id) as count
+      `SELECT COUNT(DISTINCT depends_on_queue_id) as count
        FROM email_queue
        WHERE campaign_id = $1
-       AND depends_on_email_id IS NOT NULL`,
+       AND depends_on_queue_id IS NOT NULL`,
       [campaignId]
     );
 
@@ -310,7 +310,7 @@ export async function getDependencyStats(campaignId: string): Promise<{
     const stuckResult = await executeQuery(
       `SELECT COUNT(*) as count
        FROM email_queue q
-       JOIN email_queue parent ON q.depends_on_email_id = parent.id
+       JOIN email_queue parent ON q.depends_on_queue_id = parent.id
        WHERE q.campaign_id = $1
        AND parent.status = 'failed'
        AND q.status IN ('dependency_pending', 'scheduled', 'ready_to_send')`,

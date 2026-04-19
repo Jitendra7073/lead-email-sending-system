@@ -34,7 +34,7 @@ export async function GET(
         eq.scheduled_at,
         eq.status,
         eq.template_order,
-        eq.depends_on_email_id,
+        eq.depends_on_queue_id,
         c.value as contact_value,
         c.type as contact_type,
         t.name as template_name,
@@ -63,7 +63,7 @@ export async function GET(
 
     // Get previous email in the chain (the one this email depends on)
     let previousEmail = null;
-    if (targetEmail.depends_on_email_id) {
+    if (targetEmail.depends_on_queue_id) {
       const previousQuery = `
         SELECT
           eq.id,
@@ -78,7 +78,7 @@ export async function GET(
         LEFT JOIN templates t ON eq.template_id = t.id
         WHERE eq.id = $1
       `;
-      const previousResult = await executeQuery(previousQuery, [targetEmail.depends_on_email_id]);
+      const previousResult = await executeQuery(previousQuery, [targetEmail.depends_on_queue_id]);
 
       if (previousResult.length > 0) {
         previousEmail = previousResult[0];
@@ -98,7 +98,7 @@ export async function GET(
       FROM email_queue eq
       LEFT JOIN contacts c ON eq.contact_id = c.id
       LEFT JOIN templates t ON eq.template_id = t.id
-      WHERE eq.depends_on_email_id = $1
+      WHERE eq.depends_on_queue_id = $1
       ORDER BY eq.template_order ASC
     `;
 
@@ -112,7 +112,7 @@ export async function GET(
         eq.scheduled_at,
         eq.status,
         eq.template_order,
-        eq.depends_on_email_id,
+        eq.depends_on_queue_id,
         t.name as template_name
       FROM email_queue eq
       LEFT JOIN templates t ON eq.template_id = t.id
@@ -172,7 +172,7 @@ export async function GET(
         },
         chain_status: chainStatus,
         metadata: {
-          has_dependencies: !!targetEmail.depends_on_email_id,
+          has_dependencies: !!targetEmail.depends_on_queue_id,
           has_dependents: nextEmails.length > 0,
           is_first_in_chain: !previousEmail,
           is_last_in_chain: nextEmails.length === 0

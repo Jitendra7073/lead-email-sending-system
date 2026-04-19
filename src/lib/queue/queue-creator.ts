@@ -21,7 +21,7 @@ export interface QueueEntryParams {
   sequence_position: number;
   gap_days?: number;
   previous_scheduled_at?: string;
-  depends_on_email_id?: string | null;
+  depends_on_queue_id?: string | null;
   idempotency_key: string;
   send_time?: string;
 }
@@ -93,8 +93,8 @@ export async function createQueueEntryWithValidation(params: QueueEntryParams): 
       scheduled_at: scheduleResult.adjusted_scheduled_at,
       original_scheduled_at: scheduleResult.original_scheduled_at,
       sequence_position: params.sequence_position,
-      depends_on_email_id: params.depends_on_email_id || null,
-      dependency_satisfied: params.depends_on_email_id ? false : null,
+      depends_on_queue_id: params.depends_on_queue_id || null,
+      dependency_satisfied: params.depends_on_queue_id ? false : null,
       idempotency_key: params.idempotency_key,
       status: 'pending' as const,
       timezone: timezone,

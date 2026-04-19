@@ -72,7 +72,7 @@ describe('Dependency Chain Management', () => {
 
       const emailResult = await executeQuery(
         `INSERT INTO email_queue
-         (campaign_id, contact_id, template_id, scheduled_at, status, template_order, depends_on_email_id)
+         (campaign_id, contact_id, template_id, scheduled_at, status, template_order, depends_on_queue_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
@@ -280,7 +280,7 @@ describe('Dependency Chain Management', () => {
     it('should handle missing dependencies gracefully', async () => {
       // Create email with invalid dependency
       const invalidResult = await executeQuery(
-        `INSERT INTO email_queue (campaign_id, contact_id, template_id, scheduled_at, status, template_order, depends_on_email_id)
+        `INSERT INTO email_queue (campaign_id, contact_id, template_id, scheduled_at, status, template_order, depends_on_queue_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [testCampaignId, 1, testQueueEmails[0].template_id, '2026-04-07T10:00:00Z', 'pending', 4, 99999]

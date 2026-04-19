@@ -408,10 +408,7 @@ export default function HistoryPage() {
   // Auto-start poller when in manual mode, stop when switching to auto
   React.useEffect(() => {
     if (queueMode === "manual") {
-      fetchPollerStatus().then((s) => {
-        // Start if not already running
-        startPoller();
-      });
+      fetchPollerStatus().then(() => { startPoller(); });
     } else {
       stopPoller();
     }
@@ -427,7 +424,6 @@ export default function HistoryPage() {
       const diff = pollerNextRun.getTime() - Date.now();
       if (diff <= 0) {
         setPollerCountdown("Processing...");
-        // Refresh status after a moment
         setTimeout(fetchPollerStatus, 3000);
         return;
       }
@@ -440,15 +436,48 @@ export default function HistoryPage() {
     return () => clearInterval(id);
   }, [pollerRunning, pollerNextRun]);
 
-  // Poll poller status every 30s to keep stats fresh
+  // Heartbeat: every 4 minutes the browser re-pings the appropriate worker.
+  // This keeps processing alive on Vercel's serverless (no paid cron needed)
+  // — auto mode calls process-queue directly, manual mode re-wakes the poller.
   React.useEffect(() => {
-    if (!pollerRunning) return;
-    const id = setInterval(() => {
-      fetchPollerStatus();
-      fetchQueue(pagination.page, true);
-    }, 30000);
+    const HEARTBEAT_MS = 4 * 60 * 1000; // 4 min — safely under the 5-min interval
+
+    const beat = async () => {
+      try {
+        if (queueMode === "auto") {
+          // Trigger the worker directly (replaces cron)
+          await fetch(
+            `/api/workers/process-queue?secret=${process.env.NEXT_PUBLIC_CRON_SECRET || ""}`,
+          );
+        } else {
+          // Re-wake the poller in case the serverless function went cold
+          const res = await fetch("/api/workers/auto-poller?action=status");
+          const json = await res.json();
+          if (!json.state?.running) {
+            await fetch("/api/workers/auto-poller?action=start");
+            setPollerRunning(true);
+          } else if (json.state?.nextRunAt) {
+            setPollerNextRun(new Date(json.state.nextRunAt));
+          }
+        }
+        // Refresh queue list after every heartbeat trigger
+        await fetchQueue(pagination.page, true);
+      } catch { /* silent — don't break UI on network error */ }
+    };
+
+    const id = setInterval(beat, HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [pollerRunning]);
+  }, [queueMode]);
+
+  // Auto-refresh queue data every 30s regardless of mode — keeps the list
+  // up to date as emails move from pending → sending → sent
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      fetchQueue(pagination.page, true);
+      if (pollerRunning) fetchPollerStatus();
+    }, 30 * 1000);
+    return () => clearInterval(id);
+  }, [pagination.page, pollerRunning]);
 
   // Poll processor status every 2 seconds when running
   React.useEffect(() => {
@@ -951,15 +980,15 @@ export default function HistoryPage() {
                 </div>
 
                 {queueMode === 'auto' ? (
-                  // Auto mode — cron handles everything
+                  // Auto mode — browser heartbeat triggers process-queue every 4 min
                   <div className="px-3 py-3 bg-primary/5 rounded-lg border border-primary/10">
                     <div className="flex items-start gap-2">
                       <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                       <div className="flex-1">
                         <p className="text-xs font-medium text-primary">Auto Mode Active</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          Emails are processed automatically every {queueInterval} minutes via cron job.
-                          No manual intervention needed.
+                          Emails are processed every 5 minutes automatically.
+                          Keep this page open — the browser triggers processing in the background.
                         </p>
                       </div>
                     </div>
@@ -1005,9 +1034,12 @@ export default function HistoryPage() {
                         size="sm"
                         variant="outline"
                         className="w-full gap-1.5 h-8 text-xs"
-                        onClick={() => fetch("/api/workers/auto-poller?action=run-now").then(() => {
-                          fetchQueue(pagination.page, true);
-                        })}>
+                        onClick={async () => {
+                          await fetch("/api/workers/auto-poller?action=run-now");
+                          // Give the worker ~3s to process then refresh
+                          setTimeout(() => fetchQueue(pagination.page, true), 3000);
+                          setTimeout(() => fetchQueue(pagination.page, true), 8000);
+                        }}>
                         <Zap className="h-3.5 w-3.5" />
                         Process Now
                       </Button>

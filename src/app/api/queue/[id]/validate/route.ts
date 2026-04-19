@@ -73,13 +73,13 @@ export async function POST(
     let baseTime = new Date(email.created_at).toISOString();
     let isDependent = false;
 
-    if (email.depends_on_email_id) {
+    if (email.depends_on_queue_id) {
       const prevEmailQuery = `
         SELECT scheduled_at, adjusted_scheduled_at
         FROM email_queue
         WHERE id = $1
       `;
-      const prevEmailResult = await executeQuery(prevEmailQuery, [email.depends_on_email_id]);
+      const prevEmailResult = await executeQuery(prevEmailQuery, [email.depends_on_queue_id]);
 
       if (prevEmailResult.length > 0) {
         baseTime = prevEmailResult[0].adjusted_scheduled_at || prevEmailResult[0].scheduled_at;

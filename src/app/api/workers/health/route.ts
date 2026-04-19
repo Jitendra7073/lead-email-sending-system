@@ -236,7 +236,7 @@ async function getOverallDependencyStats() {
       SELECT
         c.id as campaign_id,
         c.name as campaign_name,
-        COUNT(DISTINCT q.depends_on_email_id) as total_chains,
+        COUNT(DISTINCT q.depends_on_queue_id) as total_chains,
         COUNT(*) FILTER (WHERE q.dependency_satisfied = FALSE) as pending_activations,
         COUNT(*) FILTER (
           q.status IN ('dependency_pending', 'scheduled', 'ready_to_send')
@@ -244,7 +244,7 @@ async function getOverallDependencyStats() {
         ) as stuck_chains
       FROM campaigns c
       LEFT JOIN email_queue q ON q.campaign_id = c.id
-      LEFT JOIN email_queue parent_q ON q.depends_on_email_id = parent_q.id
+      LEFT JOIN email_queue parent_q ON q.depends_on_queue_id = parent_q.id
       WHERE c.status IN ('running', 'paused')
       GROUP BY c.id, c.name
     `);

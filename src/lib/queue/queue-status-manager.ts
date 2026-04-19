@@ -234,7 +234,7 @@ export async function cancelDependentEmails(
       // Find all direct dependents
       const dependentsResult = await client.query(
         `SELECT id FROM email_queue
-         WHERE depends_on_email_id = $1
+         WHERE depends_on_queue_id = $1
          AND status IN ('dependency_pending', 'scheduled', 'ready_to_send')
          FOR UPDATE`,
         [parentQueueId]

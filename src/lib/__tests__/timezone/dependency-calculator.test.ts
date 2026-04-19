@@ -13,13 +13,13 @@ function calculateEmailPosition(emailId: number, allEmails: any[]): number {
 }
 
 function getDependentEmails(emailId: number, allEmails: any[]): any[] {
-  return allEmails.filter(e => e.depends_on_email_id === emailId);
+  return allEmails.filter(e => e.depends_on_queue_id === emailId);
 }
 
 function getPreviousEmail(emailId: number, allEmails: any[]): any | null {
   const email = allEmails.find(e => e.id === emailId);
-  if (!email || !email.depends_on_email_id) return null;
-  return allEmails.find(e => e.id === email.depends_on_email_id) || null;
+  if (!email || !email.depends_on_queue_id) return null;
+  return allEmails.find(e => e.id === email.depends_on_queue_id) || null;
 }
 
 function validateDependencyChain(emailId: number, allEmails: any[]): {
@@ -32,11 +32,11 @@ function validateDependencyChain(emailId: number, allEmails: any[]): {
     return { is_valid: false, can_proceed: false, blocked_by: [] };
   }
 
-  if (!email.depends_on_email_id) {
+  if (!email.depends_on_queue_id) {
     return { is_valid: true, can_proceed: true, blocked_by: [] };
   }
 
-  const previousEmail = allEmails.find(e => e.id === email.depends_on_email_id);
+  const previousEmail = allEmails.find(e => e.id === email.depends_on_queue_id);
   if (!previousEmail) {
     return { is_valid: false, can_proceed: false, blocked_by: [] };
   }
@@ -51,12 +51,12 @@ function validateDependencyChain(emailId: number, allEmails: any[]): {
 
 describe('DependencyCalculator', () => {
   const mockEmails = [
-    { id: 1, contact_id: 100, template_id: 1, status: 'sent', depends_on_email_id: null, template_order: 1 },
-    { id: 2, contact_id: 100, template_id: 2, status: 'pending', depends_on_email_id: 1, template_order: 2 },
-    { id: 3, contact_id: 100, template_id: 3, status: 'pending', depends_on_email_id: 2, template_order: 3 },
-    { id: 4, contact_id: 101, template_id: 1, status: 'sent', depends_on_email_id: null, template_order: 1 },
-    { id: 5, contact_id: 101, template_id: 2, status: 'failed', depends_on_email_id: 4, template_order: 2 },
-    { id: 6, contact_id: 101, template_id: 3, status: 'pending', depends_on_email_id: 5, template_order: 3 },
+    { id: 1, contact_id: 100, template_id: 1, status: 'sent', depends_on_queue_id: null, template_order: 1 },
+    { id: 2, contact_id: 100, template_id: 2, status: 'pending', depends_on_queue_id: 1, template_order: 2 },
+    { id: 3, contact_id: 100, template_id: 3, status: 'pending', depends_on_queue_id: 2, template_order: 3 },
+    { id: 4, contact_id: 101, template_id: 1, status: 'sent', depends_on_queue_id: null, template_order: 1 },
+    { id: 5, contact_id: 101, template_id: 2, status: 'failed', depends_on_queue_id: 4, template_order: 2 },
+    { id: 6, contact_id: 101, template_id: 3, status: 'pending', depends_on_queue_id: 5, template_order: 3 },
   ];
 
   describe('calculateEmailPosition', () => {
@@ -152,9 +152,9 @@ describe('DependencyCalculator', () => {
       const middle = contact100Emails.find(e => e.template_order === 2);
       const last = contact100Emails.find(e => e.template_order === 3);
 
-      expect(first?.depends_on_email_id).toBeNull();
-      expect(middle?.depends_on_email_id).toBe(1);
-      expect(last?.depends_on_email_id).toBe(2);
+      expect(first?.depends_on_queue_id).toBeNull();
+      expect(middle?.depends_on_queue_id).toBe(1);
+      expect(last?.depends_on_queue_id).toBe(2);
     });
 
     it('should detect blocked chains', () => {
@@ -177,7 +177,7 @@ describe('DependencyCalculator', () => {
 
   describe('edge cases', () => {
     it('should handle single email chain', () => {
-      const singleChain = [{ id: 1, contact_id: 200, template_id: 1, status: 'pending', depends_on_email_id: null, template_order: 1 }];
+      const singleChain = [{ id: 1, contact_id: 200, template_id: 1, status: 'pending', depends_on_queue_id: null, template_order: 1 }];
 
       const validation = validateDependencyChain(1, singleChain);
       expect(validation.can_proceed).toBe(true);
@@ -186,8 +186,8 @@ describe('DependencyCalculator', () => {
 
     it('should handle broken dependencies', () => {
       const brokenChain = [
-        { id: 1, contact_id: 300, template_id: 1, status: 'sent', depends_on_email_id: null, template_order: 1 },
-        { id: 2, contact_id: 300, template_id: 2, status: 'pending', depends_on_email_id: 999, template_order: 2 }
+        { id: 1, contact_id: 300, template_id: 1, status: 'sent', depends_on_queue_id: null, template_order: 1 },
+        { id: 2, contact_id: 300, template_id: 2, status: 'pending', depends_on_queue_id: 999, template_order: 2 }
       ];
 
       const validation = validateDependencyChain(2, brokenChain);
@@ -196,8 +196,8 @@ describe('DependencyCalculator', () => {
 
     it('should handle circular dependencies (invalid state)', () => {
       const circularChain = [
-        { id: 1, contact_id: 400, template_id: 1, status: 'pending', depends_on_email_id: 2, template_order: 1 },
-        { id: 2, contact_id: 400, template_id: 2, status: 'pending', depends_on_email_id: 1, template_order: 2 }
+        { id: 1, contact_id: 400, template_id: 1, status: 'pending', depends_on_queue_id: 2, template_order: 1 },
+        { id: 2, contact_id: 400, template_id: 2, status: 'pending', depends_on_queue_id: 1, template_order: 2 }
       ];
 
       const validation1 = validateDependencyChain(1, circularChain);
@@ -211,8 +211,8 @@ describe('DependencyCalculator', () => {
   describe('status transitions', () => {
     it('should allow transition from pending to sent', () => {
       const emails = [
-        { id: 1, contact_id: 500, template_id: 1, status: 'sent', depends_on_email_id: null, template_order: 1 },
-        { id: 2, contact_id: 500, template_id: 2, status: 'pending', depends_on_email_id: 1, template_order: 2 }
+        { id: 1, contact_id: 500, template_id: 1, status: 'sent', depends_on_queue_id: null, template_order: 1 },
+        { id: 2, contact_id: 500, template_id: 2, status: 'pending', depends_on_queue_id: 1, template_order: 2 }
       ];
 
       const validation = validateDependencyChain(2, emails);
@@ -221,8 +221,8 @@ describe('DependencyCalculator', () => {
 
     it('should block transition when previous is pending', () => {
       const emails = [
-        { id: 1, contact_id: 600, template_id: 1, status: 'pending', depends_on_email_id: null, template_order: 1 },
-        { id: 2, contact_id: 600, template_id: 2, status: 'pending', depends_on_email_id: 1, template_order: 2 }
+        { id: 1, contact_id: 600, template_id: 1, status: 'pending', depends_on_queue_id: null, template_order: 1 },
+        { id: 2, contact_id: 600, template_id: 2, status: 'pending', depends_on_queue_id: 1, template_order: 2 }
       ];
 
       const validation = validateDependencyChain(2, emails);
@@ -231,8 +231,8 @@ describe('DependencyCalculator', () => {
 
     it('should block transition when previous is failed', () => {
       const emails = [
-        { id: 1, contact_id: 700, template_id: 1, status: 'failed', depends_on_email_id: null, template_order: 1 },
-        { id: 2, contact_id: 700, template_id: 2, status: 'pending', depends_on_email_id: 1, template_order: 2 }
+        { id: 1, contact_id: 700, template_id: 1, status: 'failed', depends_on_queue_id: null, template_order: 1 },
+        { id: 2, contact_id: 700, template_id: 2, status: 'pending', depends_on_queue_id: 1, template_order: 2 }
       ];
 
       const validation = validateDependencyChain(2, emails);
