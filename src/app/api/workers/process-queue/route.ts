@@ -99,9 +99,9 @@ export async function GET(request: Request) {
       LEFT JOIN email_senders s ON q.sender_id = s.id
       LEFT JOIN contacts c ON q.contact_id = c.id
       LEFT JOIN sites st ON c.site_id = st.id
-      WHERE q.status = 'ready_to_send'
-      AND q.adjusted_scheduled_at <= NOW()
-      AND q.dependency_satisfied = TRUE
+      WHERE q.status IN ('ready_to_send', 'pending', 'queued')
+      AND (q.adjusted_scheduled_at <= NOW() OR q.adjusted_scheduled_at IS NULL)
+      AND (q.dependency_satisfied = TRUE OR q.dependency_satisfied IS NULL)
       ORDER BY q.adjusted_scheduled_at ASC
       LIMIT 20
     `;

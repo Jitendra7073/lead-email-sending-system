@@ -204,21 +204,25 @@ export async function calculateOptimalSchedule(params: ScheduleCalculationParams
   const currentZonedDate = toZonedTime(scheduledDate, targetTimezone);
   if (!isBusinessHours(currentZonedDate, targetTimezone, regionConfig.business_hours_start, regionConfig.business_hours_end)) {
     const { hours: startHour, minutes: startMinute } = parseTimeString(regionConfig.business_hours_start);
-    const currentHour = currentZonedDate.getHours();
+    const currentTotalMinutes = currentZonedDate.getHours() * 60 + currentZonedDate.getMinutes();
+    const startTotalMinutes = startHour * 60 + startMinute;
 
-    let adjustedDate: Date;
+    let adjustedZonedDate: Date;
     let reason: string;
 
-    if (currentHour < startHour) {
-      // Before business hours - adjust to start time same day
-      adjustedDate = setMinutes(setHours(scheduledDate, startHour), startMinute);
-      reason = `Time ${currentHour}:00 is before business hours (${regionConfig.business_hours_start}), adjusted to ${regionConfig.business_hours_start}`;
+    if (currentTotalMinutes < startTotalMinutes) {
+      // Before business hours — set to start time on the same day in recipient tz
+      adjustedZonedDate = setMinutes(setHours(currentZonedDate, startHour), startMinute);
+      reason = `Time ${currentZonedDate.getHours()}:${String(currentZonedDate.getMinutes()).padStart(2, '0')} is before business hours (${regionConfig.business_hours_start}), adjusted to ${regionConfig.business_hours_start}`;
     } else {
-      // After business hours - move to next day at start time
-      const nextDay = addDays(scheduledDate, 1);
-      adjustedDate = setMinutes(setHours(nextDay, startHour), startMinute);
-      reason = `Time ${currentHour}:00 is after business hours (${regionConfig.business_hours_end}), moved to next day at ${regionConfig.business_hours_start}`;
+      // After business hours — move to next day at start time in recipient tz
+      const nextDayZoned = addDays(currentZonedDate, 1);
+      adjustedZonedDate = setMinutes(setHours(nextDayZoned, startHour), startMinute);
+      reason = `Time ${currentZonedDate.getHours()}:${String(currentZonedDate.getMinutes()).padStart(2, '0')} is after business hours (${regionConfig.business_hours_end}), moved to next day at ${regionConfig.business_hours_start}`;
     }
+
+    // Convert the zoned adjusted time back to UTC for storage
+    const adjustedDate = fromZonedTime(adjustedZonedDate, targetTimezone);
 
     adjustments.push({
       type: 'business_hours',

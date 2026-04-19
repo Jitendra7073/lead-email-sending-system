@@ -28,65 +28,41 @@ export interface ScheduleValidationParams {
 /**
  * Revalidate an email schedule before sending
  *
- * This ensures that schedules are still valid at send time, accounting for:
- * - Weekend rules (may have changed since initial scheduling)
- * - Business hours (may have changed)
- * - Timezone rules (may have been updated)
- *
- * Returns validation result with new schedule if adjustment needed
+ * Checks if the email's scheduled time has arrived (i.e. it's due to send now).
+ * If the scheduled time is still in the future, it reschedules to that future time.
+ * Does NOT recalculate a brand-new schedule from scratch — that would override
+ * the timezone-aware schedule that was already computed when the email was queued.
  */
 export async function revalidateSchedule(params: ScheduleValidationParams): Promise<ValidationResult> {
   const {
     queue_id,
-    recipient_timezone,
     current_scheduled_at,
-    country_code = 'US'
   } = params;
 
   try {
-    // Get country-specific rules
-    const countryRules = await getCountryTimezoneRules(country_code);
+    const scheduledTime = new Date(current_scheduled_at);
+    const now = new Date();
 
-    // Calculate what the schedule SHOULD be now
-    const recalculatedSchedule = await calculateOptimalSchedule({
-      recipient_country: country_code,
-      recipient_timezone,
-      base_time: new Date().toISOString(), // Recalculate from now
-      send_time: countryRules.send_time || '10:00',
-      gap_days: 0,
-      gap_hours: 0,
-      gap_minutes: 0
-    });
-
-    // Check if current schedule is still valid
-    const currentScheduledTime = new Date(current_scheduled_at);
-    const recalculatedTime = new Date(recalculatedSchedule.adjusted_scheduled_at);
-
-    // Allow 5-minute tolerance for clock skew
-    const toleranceMs = 5 * 60 * 1000;
-    const timeDiff = Math.abs(currentScheduledTime.getTime() - recalculatedTime.getTime());
-
-    if (timeDiff <= toleranceMs) {
-      // Schedule is still valid
+    // If the scheduled time is in the future (more than 1 minute buffer), not ready yet
+    const bufferMs = 60 * 1000; // 1 minute buffer
+    if (scheduledTime.getTime() > now.getTime() + bufferMs) {
       return {
-        valid: true,
-        reason: 'Schedule validation passed (within tolerance)'
+        valid: false,
+        new_scheduled_at: current_scheduled_at,
+        reason: `Email is scheduled for ${scheduledTime.toISOString()}, not yet due`,
+        adjustment_details: {
+          original: current_scheduled_at,
+          recalculated: current_scheduled_at,
+          difference_minutes: Math.round((scheduledTime.getTime() - now.getTime()) / 60000),
+          adjustments: []
+        }
       };
     }
 
-    // Schedule needs adjustment
-    const adjustmentDetails = {
-      original: current_scheduled_at,
-      recalculated: recalculatedSchedule.adjusted_scheduled_at,
-      difference_minutes: Math.round(timeDiff / (60 * 1000)),
-      adjustments: recalculatedSchedule.adjustments || []
-    };
-
+    // Scheduled time has arrived — valid to send
     return {
-      valid: false,
-      new_scheduled_at: recalculatedSchedule.adjusted_scheduled_at,
-      reason: 'Schedule revalidated: rules changed since initial scheduling',
-      adjustment_details: adjustmentDetails
+      valid: true,
+      reason: 'Schedule validation passed — email is due to send'
     };
   } catch (error) {
     console.error('Error revalidating schedule:', error);

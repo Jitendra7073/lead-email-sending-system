@@ -196,10 +196,19 @@ export default function HistoryPage() {
   const [nextProcessTime, setNextProcessTime] = useState<Date | null>(null);
   const [countdown, setCountdown] = useState<string>("");
 
+  // Auto-poller state (for manual mode background processing)
+  const [pollerRunning, setPollerRunning] = useState(false);
+  const [pollerNextRun, setPollerNextRun] = useState<Date | null>(null);
+  const [pollerCountdown, setPollerCountdown] = useState<string>("");
+  const [pollerStats, setPollerStats] = useState({ totalSent: 0, totalFailed: 0, lastRunSent: 0 });
+
   // Bulk actions state
   const [bulkActionLoading, setBulkActionLoading] = useState<string | null>(
     null,
   );
+
+  // Global actions state
+  const [globalActionLoading, setGlobalActionLoading] = useState<string | null>(null);
 
   const fetchQueue = async (page = 1, quiet = false) => {
     if (!quiet) setLoading(true);
@@ -326,11 +335,7 @@ export default function HistoryPage() {
       const distance = nextProcessTime.getTime() - now;
 
       if (distance < 0) {
-        // Time's up - show "Processing..." and wait for next cycle
-        // Don't reset - let the worker update last_queue_process
-        // Then we'll recalculate on next settings fetch
         setCountdown("Processing...");
-        // Refresh settings to get updated last_queue_process
         fetchQueueMode();
         return;
       }
@@ -356,14 +361,94 @@ export default function HistoryPage() {
   // Periodically refresh settings when in auto mode to keep countdown accurate
   React.useEffect(() => {
     if (queueMode !== "auto") return;
-
-    // Refresh settings every 10 seconds to get updated last_queue_process
-    const interval = setInterval(() => {
-      fetchQueueMode();
-    }, 10000);
-
+    const interval = setInterval(() => { fetchQueueMode(); }, 10000);
     return () => clearInterval(interval);
   }, [queueMode]);
+
+  // ── Auto-poller (manual mode background processing) ──────────────────────
+
+  const fetchPollerStatus = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/workers/auto-poller?action=status");
+      const json = await res.json();
+      if (json.success) {
+        setPollerRunning(json.state.running);
+        setPollerStats({
+          totalSent: json.state.totalSent,
+          totalFailed: json.state.totalFailed,
+          lastRunSent: json.state.lastRunSent,
+        });
+        if (json.state.nextRunAt) {
+          setPollerNextRun(new Date(json.state.nextRunAt));
+        }
+      }
+    } catch { /* silent */ }
+  }, []);
+
+  const startPoller = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/workers/auto-poller?action=start");
+      const json = await res.json();
+      if (json.success) {
+        setPollerRunning(true);
+        if (json.state.nextRunAt) setPollerNextRun(new Date(json.state.nextRunAt));
+      }
+    } catch (err) { console.error("Failed to start poller:", err); }
+  }, []);
+
+  const stopPoller = React.useCallback(async () => {
+    try {
+      await fetch("/api/workers/auto-poller?action=stop");
+      setPollerRunning(false);
+      setPollerNextRun(null);
+      setPollerCountdown("");
+    } catch (err) { console.error("Failed to stop poller:", err); }
+  }, []);
+
+  // Auto-start poller when in manual mode, stop when switching to auto
+  React.useEffect(() => {
+    if (queueMode === "manual") {
+      fetchPollerStatus().then((s) => {
+        // Start if not already running
+        startPoller();
+      });
+    } else {
+      stopPoller();
+    }
+  }, [queueMode]);
+
+  // Poller countdown ticker
+  React.useEffect(() => {
+    if (!pollerRunning || !pollerNextRun) {
+      setPollerCountdown("");
+      return;
+    }
+    const tick = () => {
+      const diff = pollerNextRun.getTime() - Date.now();
+      if (diff <= 0) {
+        setPollerCountdown("Processing...");
+        // Refresh status after a moment
+        setTimeout(fetchPollerStatus, 3000);
+        return;
+      }
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setPollerCountdown(`${m}m ${s}s`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [pollerRunning, pollerNextRun]);
+
+  // Poll poller status every 30s to keep stats fresh
+  React.useEffect(() => {
+    if (!pollerRunning) return;
+    const id = setInterval(() => {
+      fetchPollerStatus();
+      fetchQueue(pagination.page, true);
+    }, 30000);
+    return () => clearInterval(id);
+  }, [pollerRunning]);
 
   // Poll processor status every 2 seconds when running
   React.useEffect(() => {
@@ -683,6 +768,29 @@ export default function HistoryPage() {
     }
   };
 
+  const handleGlobalAction = async (action: string, confirmMsg: string) => {
+    if (!confirm(confirmMsg)) return;
+    setGlobalActionLoading(action);
+    try {
+      const res = await fetch("/api/queue/global-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        await fetchQueue(pagination.page, true);
+        alert(`${json.message} (${json.affectedCount} emails affected)`);
+      } else {
+        alert(json.error || "Action failed");
+      }
+    } catch (err: any) {
+      alert(err.message || "Action failed");
+    } finally {
+      setGlobalActionLoading(null);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex items-center justify-between">
@@ -702,858 +810,912 @@ export default function HistoryPage() {
         </Button>
       </div>
 
-      {/* Stats Summary */ }
-  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-    <StatCard
-      title="Contacts"
-      value={stats.contacts}
-      color="bg-gray-500/10 text-gray-500 border-gray-500/20"
-      icon={Users}
-    />
-    <StatCard
-      title="Total Emails"
-      value={stats.total}
-      color="bg-blue-500/10 text-blue-500 border-blue-500/20"
-      icon={Mail}
-    />
-    <StatCard
-      title="Sent"
-      value={stats.sent}
-      color="bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-      icon={CheckCircle2}
-    />
-    <StatCard
-      title="Failed"
-      value={stats.failed}
-      color="bg-destructive/10 text-destructive border-destructive/20"
-      icon={XCircle}
-    />
-    <StatCard
-      title="Queued"
-      value={stats.queued}
-      color="bg-amber-500/10 text-amber-500 border-amber-500/20"
-      icon={Clock}
-    />
-    <StatCard
-      title="Sending"
-      value={stats.sending}
-      color="bg-purple-500/10 text-purple-500 border-purple-500/20"
-      icon={TrendingUp}
-    />
-  </div>
-
-  {/* Queue Control Panel */ }
-  <Card className="border-primary/20">
-    <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10  px-6 rounded">
-      <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <CardTitle className="flex items-center gap-2 text-xl">
-            <Send className="h-5 w-5 text-primary" />
-            Queue Control Panel
-          </CardTitle>
-          <CardDescription className="text-sm">
-            Automated batch processing with intelligent scheduling
-          </CardDescription>
-        </div>
-        {processorState.running && (
-          <Badge
-            variant={processorState.paused ? "outline" : "default"}
-            className="gap-1.5">
-            <div
-              className={cn(
-                "h-2 w-2 rounded-full",
-                processorState.paused
-                  ? "bg-amber-500"
-                  : "bg-green-500 animate-pulse",
-              )}
-            />
-            <span className="font-medium">
-              {processorState.paused ? "Paused" : "Running"}
-            </span>
-          </Badge>
-        )}
+      {/* Stats Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+        <StatCard
+          title="Contacts"
+          value={stats.contacts}
+          color="bg-gray-500/10 text-gray-500 border-gray-500/20"
+          icon={Users}
+        />
+        <StatCard
+          title="Total Emails"
+          value={stats.total}
+          color="bg-blue-500/10 text-blue-500 border-blue-500/20"
+          icon={Mail}
+        />
+        <StatCard
+          title="Sent"
+          value={stats.sent}
+          color="bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+          icon={CheckCircle2}
+        />
+        <StatCard
+          title="Failed"
+          value={stats.failed}
+          color="bg-destructive/10 text-destructive border-destructive/20"
+          icon={XCircle}
+        />
+        <StatCard
+          title="Queued"
+          value={stats.queued}
+          color="bg-amber-500/10 text-amber-500 border-amber-500/20"
+          icon={Clock}
+        />
+        <StatCard
+          title="Sending"
+          value={stats.sending}
+          color="bg-purple-500/10 text-purple-500 border-purple-500/20"
+          icon={TrendingUp}
+        />
       </div>
-    </CardHeader>
-    <CardContent className="pt-6">
-      <div className="space-y-6">
-        {/* Top Row: Mode & Controls */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Queue Mode Card */}
-          <div className="p-4 bg-muted/30 rounded-xl border space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4 text-primary" />
-                <span className="font-semibold text-sm">
-                  Processing Mode
-                </span>
-              </div>
+
+      {/* Queue Control Panel */}
+      <Card className="border-primary/20">
+        <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10  px-6 rounded">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <Send className="h-5 w-5 text-primary" />
+                Queue Control Panel
+              </CardTitle>
+              <CardDescription className="text-sm">
+                Automated batch processing with intelligent scheduling
+              </CardDescription>
+            </div>
+            {processorState.running && (
               <Badge
-                variant={queueMode === "auto" ? "default" : "secondary"}
-                className="text-xs">
-                {queueMode === "auto" ? "Automatic" : "Manual"}
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {queueMode === "auto"
-                ? 'Auto-processes emails every 5 minutes'
-                : 'Manual: Click "Start Queue" to begin processing'}
-            </p>
-            {queueMode === "auto" && countdown && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 rounded-lg border border-primary/10">
-                <Clock className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs font-medium text-primary">
-                  Next batch: {countdown}
+                variant={processorState.paused ? "outline" : "default"}
+                className="gap-1.5">
+                <div
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    processorState.paused
+                      ? "bg-amber-500"
+                      : "bg-green-500 animate-pulse",
+                  )}
+                />
+                <span className="font-medium">
+                  {processorState.paused ? "Paused" : "Running"}
                 </span>
-              </div>
+              </Badge>
             )}
-            <div className="flex items-center gap-2 pt-2">
-              <Button
-                onClick={handleQueueModeToggle}
-                disabled={queueModeLoading}
-                variant={queueMode === "auto" ? "default" : "outline"}
-                size="sm"
-                className={cn(
-                  "gap-1.5 text-xs h-8 w-full",
-                  queueMode === "auto"
-                    ? "bg-green-600 hover:bg-green-700"
-                    : "",
-                )}>
-                {queueModeLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : queueMode === "auto" ? (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Switch to Manual
-                  </>
-                ) : (
-                  <>
-                    <Zap className="h-3.5 w-3.5" />
-                    Switch to Auto
-                  </>
-                )}
-              </Button>
-            </div>
           </div>
-
-          {/* Control Actions Card */}
-          <div className="p-4 bg-muted/30 rounded-xl border space-y-3">
-            <div className="flex items-center gap-2">
-              <Settings className="h-4 w-4 text-primary" />
-              <span className="font-semibold text-sm">Queue Controls</span>
-            </div>
-
-            {queueMode === 'auto' ? (
-              // Auto mode info
-              <div className="px-3 py-3 bg-primary/5 rounded-lg border border-primary/10">
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-xs font-medium text-primary">
-                      Auto Mode Active
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Emails are processed automatically every {queueInterval} minutes via cron job.
-                      <br />
-                      No manual intervention needed.
-                    </p>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <div className="space-y-6">
+            {/* Top Row: Mode & Controls */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Queue Mode Card */}
+              <div className="p-4 bg-muted/30 rounded-xl border space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-primary" />
+                    <span className="font-semibold text-sm">
+                      Processing Mode
+                    </span>
                   </div>
+                  <Badge
+                    variant={queueMode === "auto" ? "default" : "secondary"}
+                    className="text-xs">
+                    {queueMode === "auto" ? "Automatic" : "Manual"}
+                  </Badge>
                 </div>
-              </div>
-            ) : (
-              // Manual mode controls
-              <div className="grid grid-cols-2 gap-2">
-                {!processorState.running || processorState.stopped ? (
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {queueMode === "auto"
+                    ? 'Auto-processes emails every 5 minutes'
+                    : 'Manual: Click "Start Queue" to begin processing'}
+                </p>
+                {queueMode === "auto" && countdown && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 rounded-lg border border-primary/10">
+                    <Clock className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-xs font-medium text-primary">
+                      Next batch: {countdown}
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 pt-2">
                   <Button
-                    onClick={() => handleProcessorAction("start")}
-                    disabled={processorLoading}
-                    className="col-span-2 gap-2 bg-green-600 hover:bg-green-700 h-10">
-                    {processorLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                    onClick={handleQueueModeToggle}
+                    disabled={queueModeLoading}
+                    variant={queueMode === "auto" ? "default" : "outline"}
+                    size="sm"
+                    className={cn(
+                      "gap-1.5 text-xs h-8 w-full",
+                      queueMode === "auto"
+                        ? "bg-green-600 hover:bg-green-700"
+                        : "",
+                    )}>
+                    {queueModeLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : queueMode === "auto" ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Switch to Manual
+                      </>
                     ) : (
                       <>
-                        <Play className="h-4 w-4" />
-                        Start Queue for Today
+                        <Zap className="h-3.5 w-3.5" />
+                        Switch to Auto
                       </>
                     )}
                   </Button>
-                ) : (
-                  <>
-                    <Button
-                      onClick={() => handleProcessorAction("pause")}
-                      disabled={processorLoading || processorState.paused}
-                      variant="outline"
-                      className="gap-1.5 h-9 text-xs">
-                      {processorLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Pause className="h-3.5 w-3.5" />
-                          Pause
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      onClick={() => handleProcessorAction("resume")}
-                      disabled={processorLoading || !processorState.paused}
-                      variant="outline"
-                      className="gap-1.5 h-9 text-xs">
-                      {processorLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Play className="h-3.5 w-3.5" />
-                          Resume
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      onClick={() => handleProcessorAction("stop")}
-                      disabled={processorLoading}
-                      variant="outline"
-                      className="gap-1.5 h-9 text-xs text-destructive hover:text-destructive">
-                      {processorLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <StopCircle className="h-3.5 w-3.5" />
-                          Stop
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        if (
-                          confirm(
-                            "Are you sure you want to cancel ALL queued emails for today? This cannot be undone.",
-                          )
-                        ) {
-                          handleProcessorAction("cancel-all");
-                        }
-                      }}
-                      disabled={processorLoading}
-                      variant="outline"
-                      className="gap-1.5 h-9 text-xs text-destructive hover:text-destructive">
-                      {processorLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <>
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Cancel All
-                        </>
-                      )}
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Live Stats - Always Visible */}
-        <div className="p-4 bg-muted/30 rounded-xl border">
-          <div className="flex items-center gap-2 mb-3">
-            <BarChart3 className="h-4 w-4 text-primary" />
-            <span className="font-semibold text-sm">
-              Processing Statistics
-            </span>
-          </div>
-          {processorState.running ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-              <div className="text-center p-3 bg-background rounded-lg">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Status
-                </p>
-                <div className="flex items-center justify-center gap-1.5 mt-1">
-                  <div
-                    className={cn(
-                      "h-2 w-2 rounded-full",
-                      processorState.paused
-                        ? "bg-amber-500"
-                        : "bg-green-500",
-                      !processorState.paused && "animate-pulse",
-                    )}
-                  />
-                  <p className="text-sm font-bold">
-                    {processorState.paused ? "Paused" : "Active"}
-                  </p>
                 </div>
               </div>
-              <div className="text-center p-3 bg-background rounded-lg">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Batch
-                </p>
-                <p className="text-lg font-bold text-primary mt-1">
-                  {processorState.currentBatch}
-                </p>
+
+              {/* Control Actions Card */}
+              <div className="p-4 bg-muted/30 rounded-xl border space-y-3">
+                <div className="flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-sm">Queue Controls</span>
+                </div>
+
+                {queueMode === 'auto' ? (
+                  // Auto mode — cron handles everything
+                  <div className="px-3 py-3 bg-primary/5 rounded-lg border border-primary/10">
+                    <div className="flex items-start gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-xs font-medium text-primary">Auto Mode Active</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Emails are processed automatically every {queueInterval} minutes via cron job.
+                          No manual intervention needed.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  // Manual mode — auto-poller runs in background every 5 min
+                  <div className="space-y-2">
+                    <div className={`px-3 py-3 rounded-lg border ${pollerRunning ? 'bg-green-500/5 border-green-500/20' : 'bg-muted/50 border-border'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <div className={`h-2 w-2 rounded-full mt-1 shrink-0 ${pollerRunning ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground'}`} />
+                          <div>
+                            <p className={`text-xs font-medium ${pollerRunning ? 'text-green-600' : 'text-muted-foreground'}`}>
+                              {pollerRunning ? 'Background Poller Active' : 'Background Poller Stopped'}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {pollerRunning
+                                ? `Checks every 5 min — next run in ${pollerCountdown || '...'}`
+                                : 'Click Start to enable automatic background processing'}
+                            </p>
+                            {pollerRunning && (pollerStats.totalSent > 0 || pollerStats.totalFailed > 0) && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Session: {pollerStats.totalSent} sent · {pollerStats.totalFailed} failed
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={pollerRunning ? "outline" : "default"}
+                          className={`shrink-0 gap-1.5 h-8 text-xs ${pollerRunning ? 'text-destructive hover:text-destructive' : 'bg-green-600 hover:bg-green-700'}`}
+                          onClick={pollerRunning ? stopPoller : startPoller}>
+                          {pollerRunning ? (
+                            <><StopCircle className="h-3.5 w-3.5" />Stop</>
+                          ) : (
+                            <><Play className="h-3.5 w-3.5" />Start</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                    {pollerRunning && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full gap-1.5 h-8 text-xs"
+                        onClick={() => fetch("/api/workers/auto-poller?action=run-now").then(() => {
+                          fetchQueue(pagination.page, true);
+                        })}>
+                        <Zap className="h-3.5 w-3.5" />
+                        Process Now
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="text-center p-3 bg-background rounded-lg">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Processed
-                </p>
-                <p className="text-lg font-bold mt-1">
-                  {processorState.totalProcessed}
-                </p>
+            </div>
+
+            {/* Live Stats - Always Visible */}
+            <div className="p-4 bg-muted/30 rounded-xl border">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                <span className="font-semibold text-sm">
+                  Processing Statistics
+                </span>
               </div>
-              <div className="text-center p-3 bg-background rounded-lg">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Sent
-                </p>
-                <p className="text-lg font-bold text-green-600 mt-1">
-                  {processorState.totalSent}
-                </p>
+              {processorState.running ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                  <div className="text-center p-3 bg-background rounded-lg">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                      Status
+                    </p>
+                    <div className="flex items-center justify-center gap-1.5 mt-1">
+                      <div
+                        className={cn(
+                          "h-2 w-2 rounded-full",
+                          processorState.paused
+                            ? "bg-amber-500"
+                            : "bg-green-500",
+                          !processorState.paused && "animate-pulse",
+                        )}
+                      />
+                      <p className="text-sm font-bold">
+                        {processorState.paused ? "Paused" : "Active"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-center p-3 bg-background rounded-lg">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                      Batch
+                    </p>
+                    <p className="text-lg font-bold text-primary mt-1">
+                      {processorState.currentBatch}
+                    </p>
+                  </div>
+                  <div className="text-center p-3 bg-background rounded-lg">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                      Processed
+                    </p>
+                    <p className="text-lg font-bold mt-1">
+                      {processorState.totalProcessed}
+                    </p>
+                  </div>
+                  <div className="text-center p-3 bg-background rounded-lg">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                      Sent
+                    </p>
+                    <p className="text-lg font-bold text-green-600 mt-1">
+                      {processorState.totalSent}
+                    </p>
+                  </div>
+                  <div className="text-center p-3 bg-background rounded-lg">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
+                      Failed
+                    </p>
+                    <p className="text-lg font-bold text-destructive mt-1">
+                      {processorState.totalFailed}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-muted-foreground">
+                  <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm font-medium">Queue not running</p>
+                  <p className="text-xs">
+                    Start the queue to see live statistics
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Processing Rules - Collapsible */}
+            <Collapsible>
+              <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full">
+                <Info className="h-4 w-4" />
+                <span>View Processing Rules</span>
+                <ChevronDown className="h-4 w-4 ml-auto" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3">
+                <div className="p-4 bg-muted/30 rounded-xl border space-y-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="flex items-start gap-2">
+                      <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold">Schedule Scope</p>
+                        <p className="text-xs text-muted-foreground">
+                          Only processes emails scheduled for today
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Layers className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold">
+                          Batch Processing
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Sends 5 emails per batch with 1-minute delays
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Timer className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold">Break Interval</p>
+                        <p className="text-xs text-muted-foreground">
+                          5-minute pause after each batch
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <RefreshCw className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold">Sender Rotation</p>
+                        <p className="text-xs text-muted-foreground">
+                          Round-robin assignment with daily limits
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Undo2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold">Retry Logic</p>
+                        <p className="text-xs text-muted-foreground">
+                          Auto-retries failed emails up to 3 times
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
+            {/* Global Queue Actions */}
+            <div className="p-4 bg-muted/30 rounded-xl border space-y-3">
+              <div className="flex items-center gap-2">
+                <Zap className="h-4 w-4 text-primary" />
+                <span className="font-semibold text-sm">Global Queue Actions</span>
+                <span className="text-xs text-muted-foreground ml-1">— applied to all emails in queue</span>
               </div>
-              <div className="text-center p-3 bg-background rounded-lg">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">
-                  Failed
-                </p>
-                <p className="text-lg font-bold text-destructive mt-1">
-                  {processorState.totalFailed}
-                </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("pause_all_pending", "Pause ALL pending/scheduled emails in the queue?")}>
+                  {globalActionLoading === "pause_all_pending" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Pause className="h-3.5 w-3.5" />
+                  )}
+                  Pause All Pending
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("resume_all_paused", "Resume ALL paused emails in the queue?")}>
+                  {globalActionLoading === "resume_all_paused" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5" />
+                  )}
+                  Resume All Paused
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("retry_all_failed", "Retry ALL failed emails in the queue?")}>
+                  {globalActionLoading === "retry_all_failed" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Undo2 className="h-3.5 w-3.5" />
+                  )}
+                  Retry All Failed
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs text-destructive hover:text-destructive"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("cancel_all_queued", "Cancel ALL queued/pending emails? This cannot be undone.")}>
+                  {globalActionLoading === "cancel_all_queued" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <X className="h-3.5 w-3.5" />
+                  )}
+                  Cancel All Queued
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs text-amber-600 hover:text-amber-600"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("delete_all_failed", "Permanently delete ALL failed emails from the queue?")}>
+                  {globalActionLoading === "delete_all_failed" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Delete All Failed
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 h-9 text-xs text-amber-600 hover:text-amber-600"
+                  disabled={!!globalActionLoading}
+                  onClick={() => handleGlobalAction("delete_all_cancelled", "Permanently delete ALL cancelled emails from the queue?")}>
+                  {globalActionLoading === "delete_all_cancelled" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  Delete All Cancelled
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Filters */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between border-b pb-4 -mx-6 px-6">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                className="w-full bg-muted/40 border border-input rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="Search contact email or campaign..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <FilterButton
+                active={statusFilter === "all"}
+                onClick={() => setStatusFilter("all")}>
+                All
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === "sent"}
+                onClick={() => setStatusFilter("sent")}>
+                Sent
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === "failed"}
+                onClick={() => setStatusFilter("failed")}>
+                Failed
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === "queued"}
+                onClick={() => setStatusFilter("queued")}>
+                Queued
+              </FilterButton>
+              <FilterButton
+                active={statusFilter === "sending"}
+                onClick={() => setStatusFilter("sending")}>
+                Sending
+              </FilterButton>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="p-8 space-y-4">
+              {[...Array(5)].map((_, i) => (
+                <div
+                  key={i}
+                  className="h-24 bg-muted animate-pulse rounded-lg"
+                />
+              ))}
+            </div>
+          ) : contactGroups.length === 0 ? (
+            <div className="p-16 text-center">
+              <div className="flex flex-col items-center gap-2 opacity-40">
+                <Mail className="h-12 w-12" />
+                <p className="font-medium text-lg">No emails found</p>
               </div>
             </div>
           ) : (
-            <div className="text-center py-6 text-muted-foreground">
-              <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm font-medium">Queue not running</p>
-              <p className="text-xs">
-                Start the queue to see live statistics
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Processing Rules - Collapsible */}
-        <Collapsible>
-          <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full">
-            <Info className="h-4 w-4" />
-            <span>View Processing Rules</span>
-            <ChevronDown className="h-4 w-4 ml-auto" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-3">
-            <div className="p-4 bg-muted/30 rounded-xl border space-y-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="flex items-start gap-2">
-                  <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold">Schedule Scope</p>
-                    <p className="text-xs text-muted-foreground">
-                      Only processes emails scheduled for today
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Layers className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold">
-                      Batch Processing
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Sends 5 emails per batch with 1-minute delays
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Timer className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold">Break Interval</p>
-                    <p className="text-xs text-muted-foreground">
-                      5-minute pause after each batch
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <RefreshCw className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold">Sender Rotation</p>
-                    <p className="text-xs text-muted-foreground">
-                      Round-robin assignment with daily limits
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <Undo2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold">Retry Logic</p>
-                    <p className="text-xs text-muted-foreground">
-                      Auto-retries failed emails up to 3 times
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </div>
-    </CardContent>
-  </Card>
-
-  {/* Filters */ }
-  <Card>
-    <CardHeader>
-      <div className="flex flex-col md:flex-row md:items-center gap-4 justify-between border-b pb-4 -mx-6 px-6">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            className="w-full bg-muted/40 border border-input rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-            placeholder="Search contact email or campaign..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <FilterButton
-            active={statusFilter === "all"}
-            onClick={() => setStatusFilter("all")}>
-            All
-          </FilterButton>
-          <FilterButton
-            active={statusFilter === "sent"}
-            onClick={() => setStatusFilter("sent")}>
-            Sent
-          </FilterButton>
-          <FilterButton
-            active={statusFilter === "failed"}
-            onClick={() => setStatusFilter("failed")}>
-            Failed
-          </FilterButton>
-          <FilterButton
-            active={statusFilter === "queued"}
-            onClick={() => setStatusFilter("queued")}>
-            Queued
-          </FilterButton>
-          <FilterButton
-            active={statusFilter === "sending"}
-            onClick={() => setStatusFilter("sending")}>
-            Sending
-          </FilterButton>
-        </div>
-      </div>
-    </CardHeader>
-    <CardContent className="p-0">
-      {loading ? (
-        <div className="p-8 space-y-4">
-          {[...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className="h-24 bg-muted animate-pulse rounded-lg"
-            />
-          ))}
-        </div>
-      ) : contactGroups.length === 0 ? (
-        <div className="p-16 text-center">
-          <div className="flex flex-col items-center gap-2 opacity-40">
-            <Mail className="h-12 w-12" />
-            <p className="font-medium text-lg">No emails found</p>
-          </div>
-        </div>
-      ) : (
-        <div className="divide-y">
-          {contactGroups.map((group) => (
-            <ContactCard
-              key={group.email}
-              group={group}
-              isExpanded={expandedContacts.has(group.email)}
-              expandedSequences={expandedSequences}
-              onContactToggle={() => toggleContactExpanded(group.email)}
-              onSequenceToggle={(key) => toggleSequenceExpanded(key)}
-              onEmailClick={async (email) => {
-                setSelectedEmail(email);
-                // Fetch country timezones if not already loaded
-                if (Object.keys(countryTimezones).length === 0) {
-                  try {
-                    const res = await fetch("/api/countries");
-                    const json = await res.json();
-                    if (json.success) {
-                      const timezoneMap: Record<string, any> = {};
-                      json.data.forEach((c: any) => {
-                        timezoneMap[c.country_code] = c;
-                      });
-                      setCountryTimezones(timezoneMap);
-                    }
-                  } catch (err) {
-                    console.error("Failed to load timezones:", err);
-                  }
-                }
-                setModalOpen(true);
-              }}
-              formatScheduleDate={formatScheduleDate}
-              onBulkAction={handleBulkAction}
-              bulkActionLoading={bulkActionLoading}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Pagination */}
-      {pagination.totalPages > 1 && (
-        <div className="flex items-center justify-between p-4 border-t gap-2 bg-muted/5">
-          <div className="text-xs text-muted-foreground hidden sm:block">
-            Showing <span className="font-medium">{items.length}</span> of{" "}
-            <span className="font-medium">{pagination.total}</span> records
-          </div>
-          <div className="flex items-center gap-1 sm:gap-2 mx-auto sm:mx-0">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1"
-              disabled={pagination.page <= 1}
-              onClick={() => fetchQueue(pagination.page - 1)}>
-              <ChevronUp className="h-4 w-4 -rotate-90" />
-              <span className="hidden xs:inline">Prev</span>
-            </Button>
-
-            <div className="flex items-center gap-1 mx-1">
-              {Array.from(
-                { length: Math.min(5, pagination.totalPages) },
-                (_, i) => {
-                  let pageNum: number;
-                  if (pagination.totalPages <= 5) {
-                    pageNum = i + 1;
-                  } else if (pagination.page <= 3) {
-                    pageNum = i + 1;
-                  } else if (pagination.page >= pagination.totalPages - 2) {
-                    pageNum = pagination.totalPages - 4 + i;
-                  } else {
-                    pageNum = pagination.page - 2 + i;
-                  }
-
-                  return (
-                    <Button
-                      key={pageNum}
-                      variant={
-                        pagination.page === pageNum ? "default" : "outline"
+            <div className="divide-y">
+              {contactGroups.map((group) => (
+                <ContactCard
+                  key={group.email}
+                  group={group}
+                  isExpanded={expandedContacts.has(group.email)}
+                  expandedSequences={expandedSequences}
+                  onContactToggle={() => toggleContactExpanded(group.email)}
+                  onSequenceToggle={(key) => toggleSequenceExpanded(key)}
+                  onEmailClick={async (email) => {
+                    setSelectedEmail(email);
+                    // Fetch country timezones if not already loaded
+                    if (Object.keys(countryTimezones).length === 0) {
+                      try {
+                        const res = await fetch("/api/countries");
+                        const json = await res.json();
+                        if (json.success) {
+                          const timezoneMap: Record<string, any> = {};
+                          json.data.forEach((c: any) => {
+                            timezoneMap[c.country_code] = c;
+                          });
+                          setCountryTimezones(timezoneMap);
+                        }
+                      } catch (err) {
+                        console.error("Failed to load timezones:", err);
                       }
-                      size="icon"
-                      className="h-8 w-8 text-xs font-medium"
-                      onClick={() => fetchQueue(pageNum)}>
-                      {pageNum}
-                    </Button>
-                  );
-                },
-              )}
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1"
-              disabled={pagination.page >= pagination.totalPages}
-              onClick={() => fetchQueue(pagination.page + 1)}>
-              <span className="hidden xs:inline">Next</span>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
-    </CardContent>
-  </Card>
-
-  {/* Email Details Modal */ }
-  <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-      <DialogHeader>
-        <DialogTitle className="text-xl">Email Details</DialogTitle>
-        <DialogDescription>Quick overview and actions</DialogDescription>
-      </DialogHeader>
-      {selectedEmail && (
-        <div className="space-y-4">
-          {/* Status Banner - Compact */}
-          <div
-            className={`p-3 rounded-lg border flex items-center justify-between ${selectedEmail.status === "sent"
-                ? "bg-emerald-500/10 border-emerald-500/20"
-                : selectedEmail.status === "failed"
-                  ? "bg-destructive/10 border-destructive/20"
-                  : selectedEmail.status === "paused"
-                    ? "bg-amber-500/10 border-amber-500/20"
-                    : "bg-blue-500/10 border-blue-500/20"
-              }`}>
-            <div className="flex items-center gap-2">
-              {selectedEmail.status === "sent" && (
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              )}
-              {selectedEmail.status === "failed" && (
-                <XCircle className="h-4 w-4 text-destructive" />
-              )}
-              {selectedEmail.status === "paused" && (
-                <Pause className="h-4 w-4 text-amber-500" />
-              )}
-              {["pending", "scheduled", "queued", "ready_to_send"].includes(
-                selectedEmail.status,
-              ) && <Clock className="h-4 w-4 text-blue-500" />}
-              {selectedEmail.status === "sending" && (
-                <Loader2 className="h-4 w-4 text-purple-500 animate-spin" />
-              )}
-              <span className="font-medium text-sm capitalize">
-                {selectedEmail.status === "ready_to_send"
-                  ? "Ready to Send"
-                  : selectedEmail.status.replace(/_/g, " ")}
-              </span>
-            </div>
-            <QueueStatusBadge status={selectedEmail.status} />
-          </div>
-
-          {/* Key Info Grid */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Recipient */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <Mail className="h-3 w-3" />
-                <span>To</span>
-              </div>
-              {selectedEmail.recipient_name ? (
-                <>
-                  <p className="text-sm font-medium truncate">
-                    {selectedEmail.recipient_name}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {selectedEmail.recipient_email}
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm font-medium truncate">
-                  {selectedEmail.recipient_email}
-                </p>
-              )}
-            </div>
-
-            {/* Subject */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <FileText className="h-3 w-3" />
-                <span>Subject</span>
-              </div>
-              <p
-                className="text-sm font-medium truncate"
-                title={selectedEmail.subject}>
-                {selectedEmail.subject || "No subject"}
-              </p>
-            </div>
-
-            {/* Campaign */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <TrendingUp className="h-3 w-3" />
-                <span>Campaign</span>
-              </div>
-              <p className="text-sm font-medium truncate">
-                {selectedEmail.campaign_name || selectedEmail.campaign_id}
-              </p>
-              {selectedEmail.sequence_position && (
-                <p className="text-xs text-muted-foreground">
-                  Step {selectedEmail.sequence_position}
-                </p>
-              )}
-            </div>
-
-            {/* Status & Date */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <Calendar className="h-3 w-3" />
-                <span>
-                  {selectedEmail.status === "sent"
-                    ? "Sent"
-                    : selectedEmail.scheduled_at
-                      ? "Scheduled"
-                      : "Status"}
-                </span>
-              </div>
-              <p className="text-sm font-medium">
-                {selectedEmail.sent_at
-                  ? new Date(selectedEmail.sent_at).toLocaleDateString()
-                  : selectedEmail.scheduled_at
-                    ? new Date(
-                      selectedEmail.scheduled_at,
-                    ).toLocaleDateString()
-                    : "Pending"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {selectedEmail.sent_at
-                  ? new Date(selectedEmail.sent_at).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                  : selectedEmail.scheduled_at
-                    ? new Date(
-                      selectedEmail.scheduled_at,
-                    ).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                    : "-"}
-              </p>
-            </div>
-
-            {/* Attempts */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <RefreshCw className="h-3 w-3" />
-                <span>Attempts</span>
-              </div>
-              <p className="text-sm font-medium">
-                {selectedEmail.attempts} / 3
-              </p>
-              {selectedEmail.attempts > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {selectedEmail.status === "failed" ? "Failed" : "Retried"}
-                </p>
-              )}
-            </div>
-
-            {/* Queue ID */}
-            <div className="p-3 bg-muted/30 rounded-lg border">
-              <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                <AlertCircle className="h-3 w-3" />
-                <span>Queue ID</span>
-              </div>
-              <p className="text-xs font-mono text-muted-foreground truncate">
-                {selectedEmail.id}
-              </p>
-            </div>
-          </div>
-
-          {/* Error Message - Compact */}
-          {selectedEmail.error_message && (
-            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-              <div className="flex items-start gap-2">
-                <XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-destructive mb-1">
-                    Error
-                  </p>
-                  <p className="text-sm text-destructive">
-                    {selectedEmail.error_message}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Historical Record Notice */}
-          {selectedEmail.source === 'log' && (
-            <div className="p-3 bg-muted/50 border border-muted rounded-lg">
-              <div className="flex items-start gap-2">
-                <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-muted-foreground mb-1">
-                    Historical Record
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    This is a permanent historical record of a sent email. It cannot be modified or deleted.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons - Only for queue items (not log items) */}
-          {selectedEmail.source !== 'log' && (
-            <div className="flex flex-wrap gap-2 pt-2">
-              {["pending", "scheduled"].includes(selectedEmail.status) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() => handleEmailAction("pause", selectedEmail.id)}
-                  disabled={actionLoading === "pause"}>
-                  {actionLoading === "pause" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Pause className="h-4 w-4" />
-                  )}
-                  Pause
-                </Button>
-              )}
-
-              {selectedEmail.status === "paused" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2"
-                  onClick={() =>
-                    handleEmailAction("resume", selectedEmail.id)
-                  }
-                  disabled={actionLoading === "resume"}>
-                  {actionLoading === "resume" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                  Resume
-                </Button>
-              )}
-
-              {[
-                "pending",
-                "scheduled",
-                "paused",
-                "queued",
-                "ready_to_send",
-              ].includes(selectedEmail.status) &&
-                !["sent", "failed"].includes(selectedEmail.status) && (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() =>
-                      handleEmailAction("send_now", selectedEmail.id)
                     }
-                    disabled={actionLoading === "send_now"}>
-                    {actionLoading === "send_now" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                    Send Now
-                  </Button>
-                )}
-
-              {["pending", "scheduled", "queued", "ready_to_send"].includes(
-                selectedEmail.status,
-              ) && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => {
-                      if (confirm("Cancel this email?")) {
-                        handleEmailAction("cancel", selectedEmail.id);
-                      }
-                    }}
-                    disabled={actionLoading === "cancel"}>
-                    {actionLoading === "cancel" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <X className="h-4 w-4" />
-                    )}
-                    Cancel
-                  </Button>
-                )}
-
-              {selectedEmail.status !== "sending" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 text-destructive hover:text-destructive ml-auto"
-                  onClick={() => {
-                    if (confirm("Permanently delete this email?")) {
-                      handleEmailAction("delete", selectedEmail.id);
-                    }
+                    setModalOpen(true);
                   }}
-                  disabled={actionLoading === "delete"}>
-                  {actionLoading === "delete" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                  Delete
+                  formatScheduleDate={formatScheduleDate}
+                  onBulkAction={handleBulkAction}
+                  bulkActionLoading={bulkActionLoading}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between p-4 border-t gap-2 bg-muted/5">
+              <div className="text-xs text-muted-foreground hidden sm:block">
+                Showing <span className="font-medium">{items.length}</span> of{" "}
+                <span className="font-medium">{pagination.total}</span> records
+              </div>
+              <div className="flex items-center gap-1 sm:gap-2 mx-auto sm:mx-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={pagination.page <= 1}
+                  onClick={() => fetchQueue(pagination.page - 1)}>
+                  <ChevronUp className="h-4 w-4 -rotate-90" />
+                  <span className="hidden xs:inline">Prev</span>
                 </Button>
+
+                <div className="flex items-center gap-1 mx-1">
+                  {Array.from(
+                    { length: Math.min(5, pagination.totalPages) },
+                    (_, i) => {
+                      let pageNum: number;
+                      if (pagination.totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (pagination.page <= 3) {
+                        pageNum = i + 1;
+                      } else if (pagination.page >= pagination.totalPages - 2) {
+                        pageNum = pagination.totalPages - 4 + i;
+                      } else {
+                        pageNum = pagination.page - 2 + i;
+                      }
+
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={
+                            pagination.page === pageNum ? "default" : "outline"
+                          }
+                          size="icon"
+                          className="h-8 w-8 text-xs font-medium"
+                          onClick={() => fetchQueue(pageNum)}>
+                          {pageNum}
+                        </Button>
+                      );
+                    },
+                  )}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => fetchQueue(pagination.page + 1)}>
+                  <span className="hidden xs:inline">Next</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Email Details Modal */}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl">Email Details</DialogTitle>
+            <DialogDescription>Quick overview and actions</DialogDescription>
+          </DialogHeader>
+          {selectedEmail && (
+            <div className="space-y-4">
+              {/* Status Banner - Compact */}
+              <div
+                className={`p-3 rounded-lg border flex items-center justify-between ${selectedEmail.status === "sent"
+                  ? "bg-emerald-500/10 border-emerald-500/20"
+                  : selectedEmail.status === "failed"
+                    ? "bg-destructive/10 border-destructive/20"
+                    : selectedEmail.status === "paused"
+                      ? "bg-amber-500/10 border-amber-500/20"
+                      : "bg-blue-500/10 border-blue-500/20"
+                  }`}>
+                <div className="flex items-center gap-2">
+                  {selectedEmail.status === "sent" && (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  )}
+                  {selectedEmail.status === "failed" && (
+                    <XCircle className="h-4 w-4 text-destructive" />
+                  )}
+                  {selectedEmail.status === "paused" && (
+                    <Pause className="h-4 w-4 text-amber-500" />
+                  )}
+                  {["pending", "scheduled", "queued", "ready_to_send"].includes(
+                    selectedEmail.status,
+                  ) && <Clock className="h-4 w-4 text-blue-500" />}
+                  {selectedEmail.status === "sending" && (
+                    <Loader2 className="h-4 w-4 text-purple-500 animate-spin" />
+                  )}
+                  <span className="font-medium text-sm capitalize">
+                    {selectedEmail.status === "ready_to_send"
+                      ? "Ready to Send"
+                      : selectedEmail.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <QueueStatusBadge status={selectedEmail.status} />
+              </div>
+
+              {/* Key Info Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Recipient */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Mail className="h-3 w-3" />
+                    <span>To</span>
+                  </div>
+                  {selectedEmail.recipient_name ? (
+                    <>
+                      <p className="text-sm font-medium truncate">
+                        {selectedEmail.recipient_name}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {selectedEmail.recipient_email}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm font-medium truncate">
+                      {selectedEmail.recipient_email}
+                    </p>
+                  )}
+                </div>
+
+                {/* Subject */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <FileText className="h-3 w-3" />
+                    <span>Subject</span>
+                  </div>
+                  <p
+                    className="text-sm font-medium truncate"
+                    title={selectedEmail.subject}>
+                    {selectedEmail.subject || "No subject"}
+                  </p>
+                </div>
+
+                {/* Campaign */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <TrendingUp className="h-3 w-3" />
+                    <span>Campaign</span>
+                  </div>
+                  <p className="text-sm font-medium truncate">
+                    {selectedEmail.campaign_name || selectedEmail.campaign_id}
+                  </p>
+                  {selectedEmail.sequence_position && (
+                    <p className="text-xs text-muted-foreground">
+                      Step {selectedEmail.sequence_position}
+                    </p>
+                  )}
+                </div>
+
+                {/* Status & Date */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <Calendar className="h-3 w-3" />
+                    <span>
+                      {selectedEmail.status === "sent"
+                        ? "Sent"
+                        : selectedEmail.scheduled_at
+                          ? "Scheduled"
+                          : "Status"}
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium">
+                    {selectedEmail.sent_at
+                      ? new Date(selectedEmail.sent_at).toLocaleDateString()
+                      : selectedEmail.scheduled_at
+                        ? new Date(
+                          selectedEmail.scheduled_at,
+                        ).toLocaleDateString()
+                        : "Pending"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedEmail.sent_at
+                      ? new Date(selectedEmail.sent_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                      : selectedEmail.scheduled_at
+                        ? new Date(
+                          selectedEmail.scheduled_at,
+                        ).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                        : "-"}
+                  </p>
+                </div>
+
+                {/* Attempts */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <RefreshCw className="h-3 w-3" />
+                    <span>Attempts</span>
+                  </div>
+                  <p className="text-sm font-medium">
+                    {selectedEmail.attempts} / 3
+                  </p>
+                  {selectedEmail.attempts > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedEmail.status === "failed" ? "Failed" : "Retried"}
+                    </p>
+                  )}
+                </div>
+
+                {/* Queue ID */}
+                <div className="p-3 bg-muted/30 rounded-lg border">
+                  <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
+                    <AlertCircle className="h-3 w-3" />
+                    <span>Queue ID</span>
+                  </div>
+                  <p className="text-xs font-mono text-muted-foreground truncate">
+                    {selectedEmail.id}
+                  </p>
+                </div>
+              </div>
+
+              {/* Error Message - Compact */}
+              {selectedEmail.error_message && (
+                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-destructive mb-1">
+                        Error
+                      </p>
+                      <p className="text-sm text-destructive">
+                        {selectedEmail.error_message}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Historical Record Notice */}
+              {selectedEmail.source === 'log' && (
+                <div className="p-3 bg-muted/50 border border-muted rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-muted-foreground mb-1">
+                        Historical Record
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        This is a permanent historical record of a sent email. It cannot be modified or deleted.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons - Only for queue items (not log items) */}
+              {selectedEmail.source !== 'log' && (
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {["pending", "scheduled"].includes(selectedEmail.status) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => handleEmailAction("pause", selectedEmail.id)}
+                      disabled={actionLoading === "pause"}>
+                      {actionLoading === "pause" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Pause className="h-4 w-4" />
+                      )}
+                      Pause
+                    </Button>
+                  )}
+
+                  {selectedEmail.status === "paused" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() =>
+                        handleEmailAction("resume", selectedEmail.id)
+                      }
+                      disabled={actionLoading === "resume"}>
+                      {actionLoading === "resume" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      Resume
+                    </Button>
+                  )}
+
+                  {[
+                    "pending",
+                    "scheduled",
+                    "paused",
+                    "queued",
+                    "ready_to_send",
+                  ].includes(selectedEmail.status) &&
+                    !["sent", "failed"].includes(selectedEmail.status) && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() =>
+                          handleEmailAction("send_now", selectedEmail.id)
+                        }
+                        disabled={actionLoading === "send_now"}>
+                        {actionLoading === "send_now" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        Send Now
+                      </Button>
+                    )}
+
+                  {["pending", "scheduled", "queued", "ready_to_send"].includes(
+                    selectedEmail.status,
+                  ) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => {
+                          if (confirm("Cancel this email?")) {
+                            handleEmailAction("cancel", selectedEmail.id);
+                          }
+                        }}
+                        disabled={actionLoading === "cancel"}>
+                        {actionLoading === "cancel" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <X className="h-4 w-4" />
+                        )}
+                        Cancel
+                      </Button>
+                    )}
+
+                  {selectedEmail.status !== "sending" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-destructive hover:text-destructive ml-auto"
+                      onClick={() => {
+                        if (confirm("Permanently delete this email?")) {
+                          handleEmailAction("delete", selectedEmail.id);
+                        }
+                      }}
+                      disabled={actionLoading === "delete"}>
+                      {actionLoading === "delete" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      Delete
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           )}
-        </div>
-      )}
-    </DialogContent>
-  </Dialog>
+        </DialogContent>
+      </Dialog>
     </div >
   );
 }

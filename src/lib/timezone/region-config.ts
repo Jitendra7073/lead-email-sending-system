@@ -62,13 +62,20 @@ export async function getRegionConfig(countryCode: string): Promise<RegionConfig
 
     if (result.length > 0) {
       const row = result[0];
+      // weekend_days may be stored as a comma-separated string or already an array
+      const weekendDays: string[] = Array.isArray(row.weekend_days)
+        ? row.weekend_days
+        : (typeof row.weekend_days === 'string'
+          ? row.weekend_days.split(',').map((d: string) => d.trim()).filter(Boolean)
+          : ['Saturday', 'Sunday']);
+
       return {
         country_code: row.country_code,
         country_name: row.country_name,
         default_timezone: row.default_timezone,
         business_hours_start: row.business_hours_start,
         business_hours_end: row.business_hours_end,
-        weekend_days: row.weekend_days,
+        weekend_days: weekendDays,
         confidence: 'high',
         source: 'database'
       };
@@ -114,6 +121,7 @@ export function isWeekend(date: Date, timezone: string, weekendDays: string[]): 
 
 /**
  * Check if a time is within business hours
+ * Compares both hours AND minutes correctly
  */
 export function isBusinessHours(
   date: Date,
@@ -123,11 +131,15 @@ export function isBusinessHours(
 ): boolean {
   try {
     const zonedDate = toZonedTime(date, timezone);
-    const { hours: startHour } = parseTimeString(businessHoursStart);
-    const { hours: endHour } = parseTimeString(businessHoursEnd);
-    const currentHour = zonedDate.getHours();
+    const { hours: startHour, minutes: startMinute } = parseTimeString(businessHoursStart);
+    const { hours: endHour, minutes: endMinute } = parseTimeString(businessHoursEnd);
 
-    return currentHour >= startHour && currentHour < endHour;
+    // Convert to total minutes for accurate comparison
+    const currentMinutes = zonedDate.getHours() * 60 + zonedDate.getMinutes();
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
   } catch (error) {
     console.error('Error checking business hours:', error);
     return true; // Assume valid if check fails

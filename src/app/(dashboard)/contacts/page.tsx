@@ -30,6 +30,8 @@ import {
   Plus,
   Upload,
   UserPlus,
+  RefreshCw,
+  Zap,
 } from "lucide-react";
 import {
   Table,
@@ -163,7 +165,8 @@ export default function ContactsPage() {
   const [activeTab, setActiveTab] = React.useState<ContactType>("email");
   const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [bulkActionLoading, setBulkActionLoading] = React.useState(false);
+  const [bulkActionLoading, setBulkActionLoading] = React.useState<"queue" | "check" | "delete" | null>(null);
+  const [refreshing, setRefreshing] = React.useState(false);
 
   // Filters
   const [showFilters, setShowFilters] = React.useState(false);
@@ -372,6 +375,12 @@ export default function ContactsPage() {
     fetchContacts(1, activeTab);
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchContacts(meta.page, activeTab);
+    setRefreshing(false);
+  };
+
   const handleSelectAll = () => {
     const selectableIds = displayContacts.map((c) => c.id);
     if (selectedIds.size === selectableIds.length && selectableIds.every((id) => selectedIds.has(id))) {
@@ -409,6 +418,145 @@ export default function ContactsPage() {
     }
   };
 
+  // Helper: resolve a single scheduled Date against country business hours/weekends
+  const resolveScheduleConflict = (
+    scheduledAt: Date,
+    countryInfo: CountryTimezone,
+  ): { resolved: Date; status: QueuedEmail["status"]; reason: string } => {
+    const tz = countryInfo.default_timezone;
+    const weekendDays: string[] = Array.isArray(countryInfo.weekend_days)
+      ? countryInfo.weekend_days
+      : (countryInfo.weekend_days as string).split(",").map((d: string) => d.trim()).filter(Boolean);
+
+    const [startH, startM] = countryInfo.business_hours_start.split(":").map(Number);
+    const [endH, endM] = countryInfo.business_hours_end.split(":").map(Number);
+    const startTotalMins = startH * 60 + startM;
+    const endTotalMins = endH * 60 + endM;
+
+    let current = new Date(scheduledAt);
+    let iterations = 0; // safety cap
+
+    while (iterations < 14) {
+      iterations++;
+      // Get the time in the recipient's timezone
+      const localStr = current.toLocaleString("en-US", {
+        timeZone: tz, hour12: false,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+      const localDate = new Date(localStr);
+      const dayName = current.toLocaleString("en-US", { timeZone: tz, weekday: "long" });
+      const isWeekend = weekendDays.includes(dayName);
+
+      if (isWeekend) {
+        // Advance to next day at business hours start
+        current = new Date(current);
+        current.setUTCDate(current.getUTCDate() + 1);
+        // Set to business hours start in recipient tz by computing offset
+        const offsetMs = localDate.getTime() - current.getTime();
+        current = new Date(current.getTime());
+        // Reset to start of that day in local tz then add start hours
+        const dayStart = new Date(current.toLocaleString("en-US", {
+          timeZone: tz,
+          year: "numeric", month: "2-digit", day: "2-digit"
+        }) + ` ${countryInfo.business_hours_start}`);
+        // Convert back: find UTC equivalent of startH:startM in that tz
+        current = localToUTC(current, tz, startH, startM);
+        continue;
+      }
+
+      const currentTotalMins = localDate.getHours() * 60 + localDate.getMinutes();
+
+      if (currentTotalMins < startTotalMins) {
+        // Before hours — move to start time same day
+        current = localToUTC(current, tz, startH, startM);
+        break;
+      } else if (currentTotalMins >= endTotalMins) {
+        // After hours — move to next day start
+        current = new Date(current);
+        current.setUTCDate(current.getUTCDate() + 1);
+        current = localToUTC(current, tz, startH, startM);
+        continue;
+      } else {
+        // Within hours — valid
+        break;
+      }
+    }
+
+    // Final validation check
+    const finalDayName = current.toLocaleString("en-US", { timeZone: tz, weekday: "long" });
+    const finalLocalStr = current.toLocaleString("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    const finalLocal = new Date(finalLocalStr);
+    const finalMins = finalLocal.getHours() * 60 + finalLocal.getMinutes();
+    const isStillWeekend = weekendDays.includes(finalDayName);
+    const isOutside = finalMins < startTotalMins || finalMins >= endTotalMins;
+
+    if (isStillWeekend || isOutside) {
+      return {
+        resolved: current, status: isStillWeekend ? "weekend" : "outside_hours",
+        reason: isStillWeekend ? `Weekend (${finalDayName})` : `Outside business hours`
+      };
+    }
+    return { resolved: current, status: "ready", reason: "" };
+  };
+
+  // Helper: convert a UTC date to a specific local time (H:M) in a given timezone
+  const localToUTC = (utcDate: Date, tz: string, localH: number, localM: number): Date => {
+    // Get the date part in the target timezone
+    const datePart = utcDate.toLocaleString("en-US", {
+      timeZone: tz,
+      year: "numeric", month: "2-digit", day: "2-digit"
+    });
+    // Build a local datetime string and parse it as if it were UTC, then correct for offset
+    const localDateTimeStr = `${datePart} ${String(localH).padStart(2, "0")}:${String(localM).padStart(2, "0")}:00`;
+    // Use Intl to find the UTC offset at that moment
+    const probe = new Date(localDateTimeStr);
+    const tzOffset = new Date(probe.toLocaleString("en-US", { timeZone: tz })).getTime() - probe.getTime();
+    return new Date(probe.getTime() - tzOffset);
+  };
+
+  const validateEmail = (
+    scheduledAt: Date,
+    countryInfo: CountryTimezone | null | undefined,
+  ): { status: QueuedEmail["status"]; reason: string } => {
+    if (!countryInfo) return { status: "ready", reason: "" };
+
+    const tz = countryInfo.default_timezone;
+    const weekendDays: string[] = Array.isArray(countryInfo.weekend_days)
+      ? countryInfo.weekend_days
+      : (countryInfo.weekend_days as string).split(",").map((d: string) => d.trim()).filter(Boolean);
+
+    const [startH, startM] = countryInfo.business_hours_start.split(":").map(Number);
+    const [endH, endM] = countryInfo.business_hours_end.split(":").map(Number);
+
+    const dayName = scheduledAt.toLocaleString("en-US", { timeZone: tz, weekday: "long" });
+    if (weekendDays.includes(dayName)) {
+      return { status: "weekend", reason: `Weekend in ${countryInfo.country_name} (${dayName})` };
+    }
+
+    const localStr = scheduledAt.toLocaleString("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    const localDate = new Date(localStr);
+    const totalMins = localDate.getHours() * 60 + localDate.getMinutes();
+    const startMins = startH * 60 + startM;
+    const endMins = endH * 60 + endM;
+
+    if (totalMins < startMins || totalMins >= endMins) {
+      return {
+        status: "outside_hours",
+        reason: `Outside business hours (${localDate.getHours()}:${String(localDate.getMinutes()).padStart(2, "0")} local time)`,
+      };
+    }
+    return { status: "ready", reason: "" };
+  };
+
   const generateScheduledEmails = async () => {
     if (!selectedSequenceForWizard) return;
 
@@ -437,78 +585,51 @@ export default function ContactsPage() {
 
       const validContacts = contactsData.filter((c) => c && c.type === "email");
 
-      // 3. Calculate scheduled emails and validate business hours
-      const now = new Date();
+      // 3. Calculate scheduled emails using the /api/schedule/calculate endpoint
+      //    so all timezone/business-hours/weekend logic is server-side and consistent
       const emails: QueuedEmail[] = [];
       const warnings: Record<string, string> = {};
 
-      selectedSequenceForWizard.items.forEach((item) => {
-        validContacts.forEach((contact) => {
-          let scheduledAt = new Date(now);
+      for (const contact of validContacts) {
+        const countryCode = (contact.country || contact.country_code || "US").toUpperCase();
+        const countryInfo = timezoneMap[countryCode];
+        let previousAdjustedAt: string | null = null;
 
-          // Add delays
-          if (item.delay_days) {
-            scheduledAt.setDate(scheduledAt.getDate() + item.delay_days);
-          }
-          if (item.delay_hours) {
-            scheduledAt.setHours(scheduledAt.getHours() + item.delay_hours);
-          }
+        for (const item of selectedSequenceForWizard.items) {
+          // Use the server-side timezone calculator for accurate scheduling
+          const calcRes: Response = await fetch("/api/schedule/calculate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipient_country: countryCode,
+              recipient_timezone: contact.timezone || countryInfo?.default_timezone,
+              base_time: previousAdjustedAt || new Date().toISOString(),
+              gap_days: previousAdjustedAt ? (item.delay_days || 0) : 0,
+              gap_hours: previousAdjustedAt ? (item.delay_hours || 0) : 0,
+              send_time: item.send_time || countryInfo?.business_hours_start || "09:00",
+            }),
+          });
+          const calcJson: { success: boolean; data?: { adjusted_scheduled_at: string } } = await calcRes.json();
 
-          // Use send_time if available
-          if (item.send_time) {
-            const [hours, minutes] = item.send_time.split(":").map(Number);
-            scheduledAt.setHours(hours, minutes, 0, 0);
-          }
-
-          // 4. Validate against business hours
-          let status: QueuedEmail["status"] = "ready";
-          let reason = "";
-
-          const countryCode = contact.country?.toUpperCase();
-          const countryInfo = timezoneMap[countryCode];
-
-          if (countryInfo) {
-            // Convert scheduled time to country's timezone
-            const countryTime = scheduledAt.toLocaleString("en-US", {
-              timeZone: countryInfo.default_timezone,
-            });
-            const countryDate = new Date(countryTime);
-
-            // Check if weekend
-            const dayName = countryDate.toLocaleString("en-US", {
-              weekday: "long",
-            });
-            const isWeekend = countryInfo.weekend_days.includes(dayName);
-
-            if (isWeekend) {
-              status = "weekend";
-              reason = `Weekend in ${countryInfo.country_name} (${dayName})`;
-            } else {
-              // Check business hours
-              const [startHours, startMinutes] =
-                countryInfo.business_hours_start.split(":").map(Number);
-              const [endHours, endMinutes] = countryInfo.business_hours_end
-                .split(":")
-                .map(Number);
-              const currentHour = countryDate.getHours();
-              const currentMinute = countryDate.getMinutes();
-
-              const isWithinHours =
-                currentHour >= startHours &&
-                (currentHour < endHours ||
-                  (currentHour === endHours && currentMinute <= endMinutes));
-
-              if (!isWithinHours) {
-                status = "outside_hours";
-                reason = `Outside business hours (${currentHour}:${currentMinute.toString().padStart(2, "0")} local time)`;
-              }
+          let scheduledAt: Date;
+          if (calcJson.success && calcJson.data) {
+            scheduledAt = new Date(calcJson.data.adjusted_scheduled_at);
+            previousAdjustedAt = calcJson.data.adjusted_scheduled_at;
+          } else {
+            // Fallback: raw delay + send_time
+            scheduledAt = new Date();
+            if (item.delay_days) scheduledAt.setDate(scheduledAt.getDate() + item.delay_days);
+            if (item.delay_hours) scheduledAt.setHours(scheduledAt.getHours() + item.delay_hours);
+            if (item.send_time) {
+              const [h, m] = item.send_time.split(":").map(Number);
+              scheduledAt.setHours(h, m, 0, 0);
             }
+            previousAdjustedAt = scheduledAt.toISOString();
           }
 
+          const { status, reason } = validateEmail(scheduledAt, countryInfo);
           const emailKey = `${contact.id}-${item.template_id}`;
-          if (reason) {
-            warnings[emailKey] = reason;
-          }
+          if (reason) warnings[emailKey] = reason;
 
           emails.push({
             contact_id: contact.id,
@@ -521,8 +642,8 @@ export default function ContactsPage() {
             status,
             reason,
           });
-        });
-      });
+        }
+      }
 
       setQueuedEmails(emails);
       setScheduleWarnings(warnings);
@@ -533,58 +654,47 @@ export default function ContactsPage() {
     }
   };
 
+  // Auto-resolve all conflicts by pushing each email to the next valid business slot
+  const autoResolveAllConflicts = () => {
+    const newWarnings: Record<string, string> = {};
+    const resolved = queuedEmails.map((email) => {
+      const emailKey = `${email.contact_id}-${email.template_id}`;
+      if (!scheduleWarnings[emailKey]) return email; // already valid
+
+      const contact = contacts.find((c) => c.id === email.contact_id);
+      const countryCode = (contact?.country || "US").toUpperCase();
+      const countryInfo = countryTimezones[countryCode];
+      if (!countryInfo) return email;
+
+      const { resolved: newDate, status, reason } = resolveScheduleConflict(
+        new Date(email.scheduled_at),
+        countryInfo,
+      );
+
+      if (reason) newWarnings[emailKey] = reason;
+
+      return { ...email, scheduled_at: newDate, status, reason };
+    });
+
+    setQueuedEmails(resolved);
+    setScheduleWarnings(newWarnings);
+  };
+
   const saveEmailDate = () => {
     if (!editingEmail || !editingEmailDate) return;
 
     const newScheduledAt = new Date(editingEmailDate);
 
-    // Re-validate the new date/time
     const updatedEmails = queuedEmails.map((email) => {
       if (
         email.contact_id === editingEmail.contact_id &&
         email.template_id === editingEmail.template_id
       ) {
-        // Find the contact to get country info
         const contact = contacts.find((c) => c.id === email.contact_id);
-        let status: QueuedEmail["status"] = "ready";
-        let reason = "";
+        const countryCode = (contact?.country || "US").toUpperCase();
+        const countryInfo = countryTimezones[countryCode];
 
-        if (contact && contact.country) {
-          const countryCode = contact.country.toUpperCase();
-          const countryInfo = countryTimezones[countryCode];
-
-          if (countryInfo) {
-            const countryTime = newScheduledAt.toLocaleString("en-US", {
-              timeZone: countryInfo.default_timezone,
-            });
-            const countryDate = new Date(countryTime);
-
-            // Check if weekend
-            const dayName = countryDate.toLocaleString("en-US", {
-              weekday: "long",
-            });
-            const isWeekend = countryInfo.weekend_days.includes(dayName);
-
-            if (isWeekend) {
-              status = "weekend";
-              reason = `Weekend in ${countryInfo.country_name} (${dayName})`;
-            } else {
-              // Check business hours
-              const [startHours] = countryInfo.business_hours_start
-                .split(":")
-                .map(Number);
-              const [endHours] = countryInfo.business_hours_end
-                .split(":")
-                .map(Number);
-              const currentHour = countryDate.getHours();
-
-              if (currentHour < startHours || currentHour >= endHours) {
-                status = "outside_hours";
-                reason = `Outside business hours`;
-              }
-            }
-          }
-        }
+        const { status, reason } = validateEmail(newScheduledAt, countryInfo);
 
         const emailKey = `${email.contact_id}-${email.template_id}`;
         const newWarnings = { ...scheduleWarnings };
@@ -595,12 +705,7 @@ export default function ContactsPage() {
         }
         setScheduleWarnings(newWarnings);
 
-        return {
-          ...email,
-          scheduled_at: newScheduledAt,
-          status,
-          reason,
-        };
+        return { ...email, scheduled_at: newScheduledAt, status, reason };
       }
       return email;
     });
@@ -689,7 +794,7 @@ export default function ContactsPage() {
       return;
     }
 
-    setBulkActionLoading(true);
+    setBulkActionLoading(action === "delete" ? "delete" : null);
     try {
       if (action === "delete") {
         // Delete selected contacts
@@ -714,14 +819,14 @@ export default function ContactsPage() {
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setBulkActionLoading(false);
+      setBulkActionLoading(null);
     }
   };
 
   const handleCheckEmails = async () => {
     if (selectedIds.size === 0) return;
 
-    setBulkActionLoading(true);
+    setBulkActionLoading("check");
 
     // Set checking status for selected contacts
     setContacts((prev) =>
@@ -790,7 +895,7 @@ export default function ContactsPage() {
         ),
       );
     } finally {
-      setBulkActionLoading(false);
+      setBulkActionLoading(null);
       setSelectedIds(new Set());
     }
   };
@@ -802,7 +907,7 @@ export default function ContactsPage() {
     }
 
     setShowSequenceModal(false);
-    setBulkActionLoading(true);
+    setBulkActionLoading("queue");
 
     try {
       const response = await fetch("/api/contacts/add-to-queue", {
@@ -830,7 +935,7 @@ export default function ContactsPage() {
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setBulkActionLoading(false);
+      setBulkActionLoading(null);
     }
   };
 
@@ -841,7 +946,7 @@ export default function ContactsPage() {
     }
 
     setShowSequenceModal(false);
-    setBulkActionLoading(true);
+    setBulkActionLoading("queue");
 
     try {
       // First get an active sender from the database
@@ -887,7 +992,7 @@ export default function ContactsPage() {
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setBulkActionLoading(false);
+      setBulkActionLoading(null);
     }
   };
 
@@ -1293,6 +1398,14 @@ export default function ContactsPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap order-1 md:order-2 w-full md:w-auto justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={refreshing || bulkActionLoading !== null}
+                title="Refresh contacts">
+                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              </Button>
               {selectedIds.size > 0 && (
                 <>
                   <span className="text-sm text-muted-foreground">
@@ -1304,8 +1417,8 @@ export default function ContactsPage() {
                       size="sm"
                       className="gap-2"
                       onClick={() => handleBulkAction("queue")}
-                      disabled={bulkActionLoading}>
-                      {bulkActionLoading ? (
+                      disabled={bulkActionLoading !== null}>
+                      {bulkActionLoading === "queue" ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Mail className="h-4 w-4" />
@@ -1318,8 +1431,8 @@ export default function ContactsPage() {
                         size="sm"
                         className="gap-2"
                         onClick={handleCheckEmails}
-                        disabled={bulkActionLoading}>
-                        {bulkActionLoading ? (
+                        disabled={bulkActionLoading !== null}>
+                        {bulkActionLoading === "check" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <CheckCircle2 className="h-4 w-4" />
@@ -1331,7 +1444,7 @@ export default function ContactsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => handleBulkAction("cancel")}
-                      disabled={bulkActionLoading}>
+                      disabled={bulkActionLoading !== null}>
                       <X className="h-4 w-4" />
                     </Button>
                     <Button
@@ -1339,8 +1452,8 @@ export default function ContactsPage() {
                       size="sm"
                       className="gap-2 text-destructive hover:text-destructive"
                       onClick={() => handleBulkAction("delete")}
-                      disabled={bulkActionLoading}>
-                      {bulkActionLoading ? (
+                      disabled={bulkActionLoading !== null}>
+                      {bulkActionLoading === "delete" ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Trash2 className="h-4 w-4" />
@@ -1901,13 +2014,13 @@ export default function ContactsPage() {
                 setShowSequenceModal(false);
                 setSelectedSequence(null);
               }}
-              disabled={bulkActionLoading}>
+              disabled={!!bulkActionLoading}>
               Cancel
             </Button>
             <Button
               onClick={handleConfirmAddToQueue}
               disabled={
-                !selectedSequence || bulkActionLoading || sequences.length === 0
+                !selectedSequence || !!bulkActionLoading || sequences.length === 0
               }
               variant="outline"
               className="gap-2">
@@ -1926,7 +2039,7 @@ export default function ContactsPage() {
             {selectedSequence && (
               <Button
                 onClick={handleSendEmails}
-                disabled={bulkActionLoading}
+                disabled={!!bulkActionLoading}
                 className="gap-2 bg-green-600 hover:bg-green-700 text-white">
                 {bulkActionLoading ? (
                   <>
@@ -2141,9 +2254,19 @@ export default function ContactsPage() {
                   contacts
                 </p>
                 {Object.keys(scheduleWarnings).length > 0 && (
-                  <div className="mt-2 text-xs text-amber-600">
-                    Some emails are scheduled outside business hours or on
-                    weekends. Review and update them below.
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-xs text-amber-600">
+                      Some emails are scheduled outside business hours or on
+                      weekends.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 gap-1.5 text-xs h-7 border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                      onClick={autoResolveAllConflicts}>
+                      <Zap className="h-3 w-3" />
+                      Auto-resolve all
+                    </Button>
                   </div>
                 )}
               </div>
@@ -2312,11 +2435,19 @@ export default function ContactsPage() {
                 <Button variant="outline" onClick={handleWizardBack}>
                   Back
                 </Button>
+                {Object.keys(scheduleWarnings).length > 0 && (
+                  <Button
+                    variant="outline"
+                    className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10"
+                    onClick={autoResolveAllConflicts}
+                    disabled={wizardLoading}>
+                    <Zap className="h-4 w-4" />
+                    Auto-resolve
+                  </Button>
+                )}
                 <Button
                   onClick={handleWizardNext}
-                  disabled={
-                    wizardLoading || Object.keys(scheduleWarnings).length > 0
-                  }>
+                  disabled={wizardLoading}>
                   {wizardLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (

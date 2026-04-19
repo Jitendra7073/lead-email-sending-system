@@ -222,55 +222,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* How It Works Guide */}
-      <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 border-blue-200 dark:border-blue-800">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Info className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            <CardTitle className="text-blue-900 dark:text-blue-100">How It Works</CardTitle>
-          </div>
-          <CardDescription className="text-blue-700 dark:text-blue-300">
-            Follow these steps to send emails to your contacts
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Step
-            number="1"
-            title="View Contacts"
-            description="Go to the Contacts tab to see all your prospects. Filter by type (email, phone, LinkedIn) and select the ones you want to reach out to."
-            icon={Users}
-          />
-          <Step
-            number="2"
-            title="Add to Queue"
-            description="Select contacts using the checkboxes and click 'Add to Queue' to schedule them for email delivery. You can also create campaigns to send bulk emails."
-            icon={Clock}
-          />
-          <Step
-            number="3"
-            title="Monitor Progress"
-            description="Check the History tab to see email delivery status. View sent, failed, cancelled, queued, and processing emails in real-time."
-            icon={TrendingUp}
-          />
-          <div className="pt-4 border-t border-blue-200 dark:border-blue-800">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Link href="/contacts">
-                <Button className="gap-2 bg-blue-600 hover:bg-blue-700">
-                  Go to Contacts
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-              <Link href="/history">
-                <Button variant="outline" className="gap-2 border-blue-200 dark:border-blue-800">
-                  View History
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

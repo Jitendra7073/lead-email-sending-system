@@ -67,7 +67,7 @@ export async function GET(request: Request) {
 
       case "cancel-all":
         // Cancel all queued emails
-        const cancelResult = await executeQuery(
+        await executeQuery(
           `UPDATE email_queue
            SET status = 'cancelled',
                error_message = 'Cancelled by user',
@@ -179,9 +179,7 @@ async function processQueue() {
 
     if (processorState.stopped) break;
 
-    // Fetch emails scheduled for TODAY
-    const today = new Date().toISOString().split("T")[0];
-
+    // Fetch emails that are due now (respects adjusted_scheduled_at)
     const queueItems = await executeQuery(
       `
       SELECT q.*,
@@ -196,12 +194,14 @@ async function processQueue() {
       LEFT JOIN contacts c ON q.contact_id = c.id
       LEFT JOIN sites st ON c.site_id = st.id
       WHERE q.status IN ('queued', 'pending', 'scheduled', 'ready_to_send')
-      AND DATE(q.scheduled_at) = $1
-      AND (q.adjusted_scheduled_at IS NULL OR q.adjusted_scheduled_at <= NOW())
-      ORDER BY q.scheduled_at ASC
-      LIMIT $2
+      AND (
+        -- Use adjusted_scheduled_at if set, otherwise fall back to scheduled_at
+        COALESCE(q.adjusted_scheduled_at, q.scheduled_at) <= NOW()
+      )
+      ORDER BY COALESCE(q.adjusted_scheduled_at, q.scheduled_at) ASC
+      LIMIT $1
       `,
-      [today, BATCH_SIZE],
+      [BATCH_SIZE],
     );
 
     if (!queueItems || queueItems.length === 0) {
@@ -229,10 +229,10 @@ async function processQueue() {
       processorState.totalProcessed++;
 
       console.log(
-        `\n📨 [${processorState.totalProcessed}] Sending to: ${item.recipient_email}`,
+        `\n📨[${processorState.totalProcessed}] Sending to: ${item.recipient_email} `,
       );
-      console.log(`   Subject: ${item.subject}`);
-      console.log(`   Queue ID: ${item.id}`);
+      console.log(`   Subject: ${item.subject} `);
+      console.log(`   Queue ID: ${item.id} `);
 
       try {
         // Mark as sending
@@ -305,15 +305,15 @@ async function processQueue() {
           `UPDATE email_senders SET sent_today = sent_today + 1 WHERE id = $1`,
           [
             senderCredentials.id ||
-              senderCredentials.sender_id ||
-              item.sender_id,
+            senderCredentials.sender_id ||
+            item.sender_id,
           ],
         );
 
         processorState.totalSent++;
         processorState.emailsSentInBatch++;
 
-        console.log(`   ✅ Sent successfully! Message ID: ${info.messageId}`);
+        console.log(`   ✅ Sent successfully! Message ID: ${info.messageId} `);
         console.log(
           `   📊 Batch progress: ${processorState.emailsSentInBatch}/${BATCH_SIZE}`,
         );

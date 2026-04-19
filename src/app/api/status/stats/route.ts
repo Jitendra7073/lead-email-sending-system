@@ -32,7 +32,7 @@ export async function GET() {
         COUNT(*) FILTER (WHERE status = 'pending') as total_pending,
         COUNT(*) FILTER (WHERE status = 'cancelled') as total_cancelled,
         CASE
-          WHEN COUNT(*) > 0 THEN ROUND((COUNT(*) FILTER (WHERE status = 'sent')::FLOAT / COUNT(*) * 100)::NUMERIC, 2)
+          WHEN (COUNT(*) FILTER (WHERE status IN ('sent', 'failed'))) > 0 THEN ROUND((COUNT(*) FILTER (WHERE status = 'sent')::FLOAT / COUNT(*) FILTER (WHERE status IN ('sent', 'failed')) * 100)::NUMERIC, 2)
           ELSE 0
         END as success_rate
       FROM email_queue;
@@ -47,11 +47,11 @@ export async function GET() {
       FROM email_queue;
     `;
 
-    // Email statistics - this week
+    // Email statistics - this week (last 7 days)
     const emailWeekQuery = `
       SELECT
-        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= date_trunc('week', CURRENT_DATE)) as sent_this_week,
-        COUNT(*) FILTER (WHERE status = 'failed' AND sent_at >= date_trunc('week', CURRENT_DATE)) as failed_this_week
+        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= CURRENT_DATE - INTERVAL '7 days') as sent_week,
+        COUNT(*) FILTER (WHERE status = 'failed' AND sent_at >= CURRENT_DATE - INTERVAL '7 days') as failed_week
       FROM email_queue;
     `;
 
@@ -73,14 +73,28 @@ export async function GET() {
       FROM email_senders;
     `;
 
-    const [campaignStats, contactStats, emailOverall, emailToday, emailWeek, emailMonth, senderStats] = await Promise.all([
+    // Template statistics
+    const templateStatsQuery = `
+      SELECT
+        (SELECT COUNT(*) FROM email_templates) as total_templates,
+        json_object_agg(COALESCE(tag, 'untagged'), count) as templates_by_tag
+      FROM (
+        SELECT unnest(string_to_array(NULLIF(tags, ''), ',')) as tag, COUNT(*) as count
+        FROM email_templates GROUP BY tag
+        UNION ALL
+        SELECT 'untagged', COUNT(*) FROM email_templates WHERE tags IS NULL OR tags = ''
+      ) t
+    `;
+
+    const [campaignStats, contactStats, emailOverall, emailToday, emailWeek, emailMonth, senderStats, templateStats] = await Promise.all([
       executeQuery(campaignStatsQuery),
       executeQuery(contactStatsQuery),
       executeQuery(emailOverallQuery),
       executeQuery(emailTodayQuery),
       executeQuery(emailWeekQuery),
       executeQuery(emailMonthQuery),
-      executeQuery(senderStatsQuery)
+      executeQuery(senderStatsQuery),
+      executeQuery(templateStatsQuery)
     ]);
 
     return NextResponse.json({
@@ -91,10 +105,11 @@ export async function GET() {
         emails: {
           overall: emailOverall[0] || {},
           today: emailToday[0] || {},
-          this_week: emailWeek[0] || {},
+          weekly: emailWeek[0] || {},
           this_month: emailMonth[0] || {}
         },
-        senders: senderStats[0] || {}
+        senders: senderStats[0] || {},
+        templates: templateStats[0] || {}
       },
       meta: {
         timestamp: new Date().toISOString()

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { executeQuery, dbPool } from '@/lib/db/postgres';
 import { detectTimezone } from '@/lib/schedule/timezone-detector';
+import { calculateOptimalSchedule, calculateDependentSchedule } from '@/lib/schedule/schedule-calculator';
 
 export async function POST(request: Request) {
   const client = await dbPool.connect();
@@ -105,6 +106,8 @@ export async function POST(request: Request) {
         template_id: template.id,
         position: 1,
         delay_days: 0,
+        delay_hours: 0,
+        send_time: null,
         subject: template.subject,
         html_content: template.html_content,
         text_content: template.text_content
@@ -144,7 +147,6 @@ export async function POST(request: Request) {
 
     // Add contacts to queue for each template in the sequence
     const queuedEmails = [];
-    const now = new Date();
 
     for (const contact of contactsResult.rows) {
       // Detect timezone if not present
@@ -161,15 +163,41 @@ export async function POST(request: Request) {
       }
 
       // Add each template in the sequence to the queue
+      let previousScheduledAt: string | null = null;
+
       for (const templateInfo of templatesToAdd) {
-        // Calculate scheduled time based on delay_days/delay_hours
-        let scheduledAt = new Date(now);
-        if (templateInfo.delay_days) {
-          scheduledAt.setDate(scheduledAt.getDate() + templateInfo.delay_days);
+        // Use the timezone-aware schedule calculator — respects country business hours,
+        // weekends, and DST based on the country_timezones config
+        let scheduleResult;
+        const sendTime = templateInfo.send_time || '10:00';
+
+        if (templateInfo.position === 1 || !previousScheduledAt) {
+          // First email — schedule from now
+          scheduleResult = await calculateOptimalSchedule({
+            recipient_country: contact.country_code || 'US',
+            recipient_timezone: contact.timezone || undefined,
+            base_time: new Date().toISOString(),
+            send_time: sendTime,
+          });
+        } else {
+          // Follow-up email — base off previous email's adjusted schedule
+          const gapDays = templateInfo.delay_days || 0;
+          const gapHours = templateInfo.delay_hours || 0;
+          scheduleResult = await calculateDependentSchedule(
+            previousScheduledAt,
+            gapDays,
+            {
+              recipient_country: contact.country_code || 'US',
+              recipient_timezone: contact.timezone || undefined,
+              send_time: sendTime,
+              gap_hours: gapHours,
+            }
+          );
         }
-        if ('delay_hours' in templateInfo && templateInfo.delay_hours) {
-          scheduledAt.setHours(scheduledAt.getHours() + templateInfo.delay_hours);
-        }
+
+        const scheduledAt = scheduleResult.original_scheduled_at;
+        const adjustedScheduledAt = scheduleResult.adjusted_scheduled_at;
+        previousScheduledAt = adjustedScheduledAt;
 
         // Insert into email queue
         const queueResult = await client.query(
@@ -188,7 +216,7 @@ export async function POST(request: Request) {
             templateInfo.html_content,
             templateInfo.template_id,
             scheduledAt,
-            scheduledAt, // adjusted_scheduled_at should be the scheduled time, not current time
+            adjustedScheduledAt,
             templateInfo.position,
             contact.timezone || 'UTC',
             contact.country_code || null
