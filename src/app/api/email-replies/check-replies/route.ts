@@ -1,35 +1,37 @@
 import { NextResponse } from 'next/server';
 import { executeQuery } from '@/lib/db/postgres';
-import { getGmailClient, getGmailSettings } from '@/lib/email/gmail-client';
+import { getGmailClient } from '@/lib/email/gmail-client';
 
-// Stage 1 configuration handled dynamically in POST
-
-// Parse email from header
-function parseEmailHeader(header: string): string {
-  const match = header.match(/<(.+)>/);
-  return match ? match[1] : header;
+// Normalize Message-IDs by stripping angle brackets for consistent comparison
+function normalizeId(id: string | null | undefined): string {
+  if (!id) return '';
+  return id.replace(/[<>]/g, '').trim();
 }
 
-// Parse name from header
+// Parse email address from "Name <email@domain.com>"
+function parseEmailHeader(header: string): string {
+  const match = header.match(/<(.+)>/);
+  return match ? match[1].toLowerCase().trim() : header.toLowerCase().trim();
+}
+
+// Parse display name from "Name <email@domain.com>"
 function parseNameHeader(header: string): string {
   const match = header.match(/(.*)\s*<.+>/);
   return match ? match[1].trim() : header;
 }
 
-// Extract email body from Gmail message
+// Extract plain text body from Gmail message payload
 function extractEmailBody(message: any): string {
   const payload = message.payload;
+  if (!payload) return '';
 
   function extractTextFromPart(part: any): string {
-    if (part.mimeType === 'text/plain' && part.body) {
+    if (part.mimeType === 'text/plain' && part.body?.data) {
       return Buffer.from(part.body.data, 'base64').toString('utf-8');
     }
-    if (part.mimeType === 'text/html' && part.body) {
+    if (part.mimeType === 'text/html' && part.body?.data) {
       const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
-      return html
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
     }
     if (part.parts) {
       return part.parts.map(extractTextFromPart).join('\n');
@@ -40,19 +42,22 @@ function extractEmailBody(message: any): string {
   return extractTextFromPart(payload);
 }
 
+// Strip Re:/Fwd: prefixes and template variables for subject comparison
+function cleanSubject(subject: string): string {
+  return subject
+    .replace(/^(re|fw|fwd|reply|forward):\s*/i, '')
+    .replace(/\{\{[^}]+\}\}/g, '') // strip {{template_vars}}
+    .trim()
+    .toLowerCase();
+}
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { 
-      startDate, 
-      endDate, 
-      recipientEmail,
-      searchDirectly = false,
-      force = false 
-    } = body;
+    const body = await request.json().catch(() => ({}));
+    const { startDate, endDate, recipientEmail, force = false } = body;
 
-    // Stage 0: Get Gmail client and check settings
-    let gmail;
+    // Authenticate Gmail
+    let gmail: any;
     try {
       gmail = await getGmailClient();
     } catch (err: any) {
@@ -64,326 +69,293 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
 
-    let sentEmails: any[] = [];
-    let searchQuery = 'in:inbox'; // CRITICAL FIX: Search ALL inbox messages, not just unread
+    // --- Stage 1: Load sent emails from DB ---
+    // Use 90-day lookback by default to cast a wide net for matching
+    const lookbackDate = startDate
+      ? new Date(startDate)
+      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    if (searchDirectly) {
-      // Stage 1: Skip DB, build Gmail search query directly from filters
-      // IMPORTANT: Search for REPLIES FROM the recipient, not emails TO them
-      if (recipientEmail) searchQuery += ` from:(${recipientEmail})`;
-      if (startDate) searchQuery += ` after:${Math.floor(new Date(startDate).getTime() / 1000)}`;
-      if (endDate) searchQuery += ` before:${Math.floor(new Date(endDate).getTime() / 1000)}`;
-
-      // Fetch ALL sent emails for potential matching (wider net)
-      sentEmails = await executeQuery(`
-        SELECT id, message_id, recipient_email, subject, sent_at
-        FROM email_queue
-        WHERE message_id IS NOT NULL
+    const queryParams: any[] = [lookbackDate];
+    let sentQuery = `
+      SELECT id, message_id, recipient_email, subject, sent_at
+      FROM email_queue
+      WHERE message_id IS NOT NULL
         AND status = 'sent'
         AND sent_at >= $1
-        ORDER BY sent_at DESC
-      `, [startDate ? new Date(startDate) : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)]);
-    } else {
-      // Stage 1: Legacy - Fetch sent emails from DB first
-      let query = `
-        SELECT id, message_id, recipient_email, subject
-        FROM email_queue
-        WHERE message_id IS NOT NULL
-        AND status = 'sent'
-      `;
-      const queryParams: any[] = [];
-      let paramIndex = 1;
+    `;
 
-      if (startDate) {
-        query += ` AND sent_at >= $${paramIndex++}`;
-        queryParams.push(new Date(startDate));
-      } else {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        query += ` AND sent_at >= $${paramIndex++}`;
-        queryParams.push(thirtyDaysAgo);
-      }
-
-      if (endDate) {
-        query += ` AND sent_at <= $${paramIndex++}`;
-        queryParams.push(new Date(endDate));
-      }
-
-      if (recipientEmail) {
-        query += ` AND recipient_email = $${paramIndex++}`;
-        queryParams.push(recipientEmail);
-      }
-
-      query += ` ORDER BY sent_at DESC`;
-      sentEmails = await executeQuery(query, queryParams);
-
-      if (!sentEmails || sentEmails.length === 0) {
-        return NextResponse.json({
-          success: true,
-          stage: 'fetching_sent',
-          details: {
-            sentEmailsFound: 0,
-            message: (startDate || endDate || recipientEmail) 
-              ? 'No sent emails found matching the applied filters' 
-              : 'No sent emails found in the last 30 days',
-            repliesFound: []
-          }
-        });
-      }
-
-      const recipients = [...new Set(sentEmails.map((e: any) => e.recipient_email))];
-      searchQuery += ` from:(${recipients.join(',')})`;
+    if (endDate) {
+      sentQuery += ` AND sent_at <= $2`;
+      queryParams.push(new Date(endDate));
+    }
+    if (recipientEmail) {
+      sentQuery += ` AND recipient_email = $${queryParams.length + 1}`;
+      queryParams.push(recipientEmail);
     }
 
-    // Stage 2: Search for new replies
-    const response = await gmail.users.messages.list({
-      userId: 'me',
-      q: searchQuery,
-      maxResults: 50,
-    });
+    sentQuery += ` ORDER BY sent_at DESC`;
 
-    const messages = response.data.messages;
+    const sentEmails: any[] = await executeQuery(sentQuery, queryParams);
 
-    if (!messages || messages.length === 0) {
+    if (!sentEmails || sentEmails.length === 0) {
       return NextResponse.json({
         success: true,
-        stage: 'searching_replies',
+        stage: 'fetching_sent',
         details: {
-          sentEmailsFound: searchDirectly ? 'N/A' : sentEmails.length,
-          message: 'No new unread replies found in inbox match',
-          repliesFound: []
+          sentEmailsFound: 0,
+          message: 'No sent emails found matching the applied filters',
+          unreadRepliesFound: 0,
+          newRepliesProcessed: 0,
+          errors: 0,
+          replies: [],
+          errorsList: []
         }
       });
     }
 
-    // Stage 3: Process each reply
-    const repliesFound = [];
-    const errors = [];
+    // Build O(1) lookup maps
+    // Key: normalized message_id (no angle brackets) → sent email row
+    const byMessageId = new Map<string, any>();
+    // Key: recipient_email → array of sent emails (for subject fallback)
+    const byRecipient = new Map<string, any[]>();
 
-    for (const msg of messages) {
+    for (const row of sentEmails) {
+      const normId = normalizeId(row.message_id);
+      if (normId) byMessageId.set(normId, row);
+
+      const email = row.recipient_email?.toLowerCase().trim();
+      if (email) {
+        if (!byRecipient.has(email)) byRecipient.set(email, []);
+        byRecipient.get(email)!.push(row);
+      }
+    }
+
+    // --- Stage 2: Search Gmail inbox for replies ---
+    // Use `is:reply` to filter only actual reply messages, cutting noise dramatically
+    let searchQuery = 'in:inbox is:reply';
+
+    if (recipientEmail) {
+      // Searching for replies FROM a specific person
+      searchQuery += ` from:(${recipientEmail})`;
+    } else {
+      // Limit to replies from known recipients only
+      const knownEmails = Array.from(byRecipient.keys());
+      if (knownEmails.length > 0 && knownEmails.length <= 30) {
+        searchQuery += ` from:(${knownEmails.join(' OR ')})`;
+      }
+    }
+
+    // Date range filter
+    if (startDate) {
+      searchQuery += ` after:${Math.floor(new Date(startDate).getTime() / 1000)}`;
+    }
+    if (endDate) {
+      searchQuery += ` before:${Math.floor(new Date(endDate).getTime() / 1000)}`;
+    }
+
+    // Fetch up to 100 messages with pagination support
+    let allMessages: any[] = [];
+    let pageToken: string | undefined;
+
+    do {
+      const response: any = await gmail.users.messages.list({
+        userId: 'me',
+        q: searchQuery,
+        maxResults: 100,
+        ...(pageToken ? { pageToken } : {})
+      });
+
+      const msgs = response.data.messages || [];
+      allMessages = allMessages.concat(msgs);
+      pageToken = response.data.nextPageToken;
+
+      // Cap at 500 to avoid runaway API usage
+      if (allMessages.length >= 500) break;
+    } while (pageToken);
+
+    if (allMessages.length === 0) {
+      return NextResponse.json({
+        success: true,
+        stage: 'completed',
+        details: {
+          sentEmailsFound: sentEmails.length,
+          unreadRepliesFound: 0,
+          newRepliesProcessed: 0,
+          errors: 0,
+          message: 'No replies found in inbox',
+          replies: [],
+          errorsList: []
+        }
+      });
+    }
+
+    // --- Stage 3: Match and store replies ---
+    const repliesFound: any[] = [];
+    const errors: any[] = [];
+
+    for (const msg of allMessages) {
       try {
-        // Get message metadata
-        const messageData = await gmail.users.messages.get({
+        // Fetch metadata headers only (cheap API call)
+        const metaRes = await gmail.users.messages.get({
           userId: 'me',
           id: msg.id!,
           format: 'metadata',
-          metadataHeaders: [
-            'In-Reply-To',
-            'From',
-            'Subject',
-            'Message-ID',
-            'References',
-          ],
+          metadataHeaders: ['In-Reply-To', 'References', 'From', 'Subject', 'Message-ID', 'Date'],
         });
 
-        const headers = messageData.data.payload?.headers;
-        if (!headers) {
-          errors.push({
-            messageId: msg.id,
-            reason: 'No headers found in message'
-          });
-          continue;
-        }
+        const headers = metaRes.data.payload?.headers || [];
+        const getHeader = (name: string): string =>
+          headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
 
-        const inReplyToHeader = headers.find((h: any) => h.name === 'In-Reply-To');
-        const fromHeader = headers.find((h: any) => h.name === 'From');
-        const subjectHeader = headers.find((h: any) => h.name === 'Subject');
-        const messageIdHeader = headers.find((h: any) => h.name === 'Message-ID');
+        const rawInReplyTo = getHeader('In-Reply-To');
+        const rawReferences = getHeader('References');
+        const rawFrom = getHeader('From');
+        const rawSubject = getHeader('Subject');
+        const rawDate = getHeader('Date');
+        const threadId = metaRes.data.threadId || '';
 
-        // MULTIPLE MATCHING STRATEGIES - Don't skip if only In-Reply-To is missing
-        const inReplyTo = inReplyToHeader?.value || '';
-        const referencesHeader = headers.find((h: any) => h.name === 'References');
-        const references = referencesHeader?.value ? referencesHeader.value.split(/\s+/).filter(Boolean) : [];
-        const threadId = messageData.data.threadId;
+        const inReplyTo = normalizeId(rawInReplyTo);
+        const references = rawReferences
+          ? rawReferences.split(/\s+/).map(normalizeId).filter(Boolean)
+          : [];
+        const fromEmail = parseEmailHeader(rawFrom);
 
-        // MULTIPLE MATCHING STRATEGIES - ENHANCED
-        let originalEmail = null;
+        let originalEmail: any = null;
         let matchStrategy = '';
 
-        // Strategy 1: Match by In-Reply-To header (most reliable)
-        if (inReplyTo) {
-          originalEmail = sentEmails.find(
-            (e: any) => e.message_id === inReplyTo
-          );
-          if (originalEmail) matchStrategy = 'In-Reply-To';
+        // Strategy 1: In-Reply-To header — most reliable, exact match
+        if (inReplyTo && byMessageId.has(inReplyTo)) {
+          originalEmail = byMessageId.get(inReplyTo);
+          matchStrategy = 'In-Reply-To';
         }
 
-        // Strategy 2: Match by References header (contains thread history)
+        // Strategy 2: References header — catches threaded replies
         if (!originalEmail && references.length > 0) {
           for (const ref of references) {
-            const found = sentEmails.find((e: any) => e.message_id === ref);
-            if (found) {
-              originalEmail = found;
+            if (byMessageId.has(ref)) {
+              originalEmail = byMessageId.get(ref);
               matchStrategy = 'References';
               break;
             }
           }
         }
 
-        // Strategy 3: Match by Sender + Subject + Date Range (NEW - Most Robust)
-        if (!originalEmail) {
-          const fromEmail = parseEmailHeader(fromHeader?.value || '');
-          const subject = subjectHeader?.value || '';
-          const replyDate = new Date(); // Will be set from message headers
+        // Strategy 3: Sender email + subject similarity
+        // Only runs if the sender is a known recipient (avoids false positives)
+        if (!originalEmail && byRecipient.has(fromEmail)) {
+          const candidates = byRecipient.get(fromEmail)!;
+          const cleanReply = cleanSubject(rawSubject);
 
-          // Find sent email to this person with similar subject
-          originalEmail = sentEmails.find((e: any) => {
-            // Must match recipient
-            if (e.recipient_email !== fromEmail) return false;
-
-            // Check subject similarity (handle RE:, FW:, etc.)
-            const cleanReplySubject = subject
-              .replace(/^(re|fw|fwd|reply|forward):\s*/i, '')
-              .trim()
-              .toLowerCase();
-            const cleanSentSubject = e.subject
-              .replace(/^(re|fw|fwd|reply|forward):\s*/i, '')
-              .trim()
-              .toLowerCase();
-
-            // Match if subjects are similar (one contains the other)
-            const subjectsMatch = cleanReplySubject.includes(cleanSentSubject) ||
-                                 cleanSentSubject.includes(cleanReplySubject) ||
-                                 cleanReplySubject.length > 0 && cleanSentSubject.length > 0 &&
-                                 (cleanReplySubject.includes(cleanSentSubject.substring(0, 20)) ||
-                                  cleanSentSubject.includes(cleanReplySubject.substring(0, 20)));
-
-            return subjectsMatch;
-          });
-
-          if (originalEmail) matchStrategy = 'Sender+Subject';
-        }
-
-        // Strategy 4: Match by Subject only (last resort)
-        if (!originalEmail) {
-          const subject = subjectHeader?.value || '';
-          const isReply = /^(re|fw|fwd|reply|forward):/i.test(subject);
-
-          if (isReply) {
-            const baseSubject = subject.replace(/^(re|fw|fwd|reply|forward):\s*/i, '').trim().toLowerCase();
-            originalEmail = sentEmails.find((e: any) => {
-              const sentSubject = e.subject.toLowerCase();
-              return sentSubject.includes(baseSubject) || baseSubject.includes(sentSubject);
-            });
-            if (originalEmail) matchStrategy = 'Subject-Only';
+          if (cleanReply.length >= 5) { // avoid matching on empty/trivial subjects
+            for (const candidate of candidates) {
+              const cleanSent = cleanSubject(candidate.subject);
+              if (
+                cleanSent.length >= 5 &&
+                (cleanReply.includes(cleanSent) || cleanSent.includes(cleanReply))
+              ) {
+                originalEmail = candidate;
+                matchStrategy = 'Sender+Subject';
+                break;
+              }
+            }
           }
         }
 
         if (!originalEmail) {
           errors.push({
             messageId: msg.id,
-            reason: `Could not match reply to any sent email. From: ${fromHeader?.value}, Subject: ${subjectHeader?.value}, In-Reply-To: ${inReplyTo || 'none'}, Match Strategy: ${matchStrategy || 'none'}`
+            reason: `Could not match reply to any sent email. From: ${rawFrom}, Subject: ${rawSubject}, In-Reply-To: ${rawInReplyTo || 'none'}, Match Strategy: none`
           });
           continue;
         }
 
-        // Get full message for body extraction
-        const fullMessage = await gmail.users.messages.get({
+        // Check for duplicate before fetching full message body
+        const existing = await executeQuery(
+          'SELECT id FROM email_replies WHERE reply_message_id = $1',
+          [msg.id]
+        );
+
+        if (existing && existing.length > 0 && !force) {
+          // Already tracked, skip
+          continue;
+        }
+
+        // Fetch full message for body (only for matched replies)
+        const fullMsg = await gmail.users.messages.get({
           userId: 'me',
           id: msg.id!,
           format: 'full',
         });
 
-        const body = extractEmailBody(fullMessage.data);
-        const fromEmail = parseEmailHeader(fromHeader?.value || '');
-        const fromName = parseNameHeader(fromHeader?.value || '');
+        const body = extractEmailBody(fullMsg.data);
+        const fromName = parseNameHeader(rawFrom);
+        const replyMsgId = normalizeId(getHeader('Message-ID'));
 
-        // Check if reply already exists
-        const existingReply = await executeQuery(
-          'SELECT id FROM email_replies WHERE reply_message_id = $1',
-          [msg.id]
-        );
+        // Parse actual received date from Gmail internalDate (milliseconds epoch)
+        const receivedAt = fullMsg.data.internalDate
+          ? new Date(parseInt(fullMsg.data.internalDate, 10)).toISOString()
+          : new Date().toISOString();
 
-        if (existingReply && existingReply.length > 0) {
-          // Update existing reply
+        if (existing && existing.length > 0) {
+          // force=true: update existing record
           await executeQuery(
-            `
-            UPDATE email_replies
-            SET
-              from_email = $1,
-              from_name = $2,
-              subject = $3,
-              body = $4,
-              thread_id = $5,
-              in_reply_to = $6,
-              received_at = NOW(),
-              processed = FALSE
-            WHERE reply_message_id = $7
-            `,
-            [
-              fromEmail,
-              fromName,
-              subjectHeader?.value || '',
-              body,
-              fullMessage.data.threadId!,
-              inReplyTo,
-              msg.id
-            ]
+            `UPDATE email_replies
+             SET from_email = $1, from_name = $2, subject = $3, body = $4,
+                 thread_id = $5, in_reply_to = $6, received_at = $7, processed = FALSE
+             WHERE reply_message_id = $8`,
+            [fromEmail, fromName, rawSubject, body, threadId, inReplyTo, receivedAt, msg.id]
           );
         } else {
-          // Insert new reply
           await executeQuery(
-            `
-            INSERT INTO email_replies (
-              queue_id,
-              message_id,
-              reply_message_id,
-              from_email,
-              from_name,
-              subject,
-              body,
-              thread_id,
-              in_reply_to,
-              is_reply,
-              recipient_email,
-              original_subject
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (reply_message_id) DO UPDATE SET
-              processed = FALSE,
-              received_at = NOW()
-            `,
+            `INSERT INTO email_replies (
+               queue_id, message_id, reply_message_id, from_email, from_name,
+               subject, body, thread_id, in_reply_to, is_reply,
+               recipient_email, original_subject, received_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (reply_message_id) DO UPDATE SET
+               processed = FALSE,
+               received_at = EXCLUDED.received_at`,
             [
               originalEmail.id,
-              inReplyTo,
+              replyMsgId,
               msg.id,
               fromEmail,
               fromName,
-              subjectHeader?.value || '',
+              rawSubject,
               body,
-              fullMessage.data.threadId!,
+              threadId,
               inReplyTo,
               true,
               originalEmail.recipient_email,
-              originalEmail.subject
+              originalEmail.subject,
+              receivedAt
             ]
           );
         }
 
-        // Mark as read
+        // Mark as read in Gmail
         await gmail.users.messages.modify({
           userId: 'me',
           id: msg.id!,
-          requestBody: {
-            removeLabelIds: ['UNREAD'],
-          },
+          requestBody: { removeLabelIds: ['UNREAD'] },
         });
 
         repliesFound.push({
           id: msg.id,
           from: fromName || fromEmail,
           fromEmail,
-          subject: subjectHeader?.value || 'No Subject',
-          body: body.substring(0, 100) + '...',
-          receivedAt: new Date().toISOString(),
+          subject: rawSubject || 'No Subject',
+          body: body.substring(0, 200) + (body.length > 200 ? '...' : ''),
+          receivedAt,
           originalEmailId: originalEmail.id,
           originalSubject: originalEmail.subject,
-          matchStrategy: matchStrategy || 'Unknown'
+          matchStrategy
         });
 
-      } catch (error: any) {
+      } catch (err: any) {
         errors.push({
           messageId: msg.id,
-          reason: error.message || 'Unknown error'
+          reason: err.message || 'Unknown error processing message'
         });
       }
     }
@@ -393,7 +365,7 @@ export async function POST(request: Request) {
       stage: 'completed',
       details: {
         sentEmailsFound: sentEmails.length,
-        unreadRepliesFound: messages.length,
+        unreadRepliesFound: allMessages.length,
         newRepliesProcessed: repliesFound.length,
         errors: errors.length,
         replies: repliesFound,
@@ -402,7 +374,7 @@ export async function POST(request: Request) {
     });
 
   } catch (error: any) {
-    console.error('Error in manual reply check:', error);
+    console.error('Error in check-replies:', error);
     return NextResponse.json({
       success: false,
       error: error.message,

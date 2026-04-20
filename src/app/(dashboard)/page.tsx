@@ -24,6 +24,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn, formatNumber } from "@/lib/utils";
 import Link from "next/link";
+import AnalyticsSection from "@/components/dashboard/AnalyticsSection";
 
 interface StatsData {
   campaigns: {
@@ -170,15 +171,17 @@ export default function Dashboard() {
         <StatCard
           title="Sent This Week"
           value={formatNumber(weekly?.sent_week || 0)}
-          description="Last 7 days performance"
+          description="Mon–Sun this week"
           icon={Calendar}
           color="text-orange-500"
         />
       </div>
 
+      {/* Analytics Section */}
+      <AnalyticsSection />
+
       {/* Additional Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Active Senders */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">        {/* Active Senders */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Senders</CardTitle>

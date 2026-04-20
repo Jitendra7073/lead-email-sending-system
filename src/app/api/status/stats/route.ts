@@ -47,11 +47,11 @@ export async function GET() {
       FROM email_queue;
     `;
 
-    // Email statistics - this week (last 7 days)
+    // Email statistics - this week (Monday to now)
     const emailWeekQuery = `
       SELECT
-        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= CURRENT_DATE - INTERVAL '7 days') as sent_week,
-        COUNT(*) FILTER (WHERE status = 'failed' AND sent_at >= CURRENT_DATE - INTERVAL '7 days') as failed_week
+        COUNT(*) FILTER (WHERE status = 'sent' AND sent_at >= date_trunc('week', CURRENT_DATE)) as sent_week,
+        COUNT(*) FILTER (WHERE status = 'failed' AND sent_at >= date_trunc('week', CURRENT_DATE)) as failed_week
       FROM email_queue;
     `;
 

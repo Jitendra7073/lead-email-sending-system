@@ -165,12 +165,12 @@ export async function checkInboxForReplies(options?: ReplyTrackingOptions): Prom
       recipientEmails.add(row.recipient_email);
     });
 
-    // Build Gmail search query - CRITICAL FIX: Remove is:unread to find ALL replies
-    let searchQuery = "in:inbox";
+    // Use is:reply to filter only actual reply messages, cutting inbox noise
+    let searchQuery = "in:inbox is:reply";
 
     // Add sender filter if we have specific recipients
     if (recipientEmails.size > 0 && !(options?.specificMessageId)) {
-      const recipientList = Array.from(recipientEmails).join(' OR ');
+      const recipientList = Array.from(recipientEmails).slice(0, 30).join(' OR ');
       searchQuery += ` from:(${recipientList})`;
     }
 
@@ -280,13 +280,18 @@ export async function checkInboxForReplies(options?: ReplyTrackingOptions): Prom
             const fromHeader = getHeader("From") || "";
             const replyMsgId = getHeader("Message-ID") || "";
 
+            // Use Gmail's internalDate for accurate received timestamp
+            const receivedAt = fullMessage.data.internalDate
+              ? new Date(parseInt(fullMessage.data.internalDate, 10))
+              : new Date();
+
             await client.query(
               `INSERT INTO email_replies (
                 queue_id, message_id, reply_message_id, from_email, from_name,
-                subject, body, thread_id, in_reply_to, recipient_email, original_subject
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                subject, body, thread_id, in_reply_to, recipient_email, original_subject, received_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
               ON CONFLICT (reply_message_id)
-              DO UPDATE SET received_at = NOW(), processed = FALSE`,
+              DO UPDATE SET received_at = EXCLUDED.received_at, processed = FALSE`,
               [
                 matchedEmail.id,
                 normalizeId(replyMsgId),
@@ -298,7 +303,8 @@ export async function checkInboxForReplies(options?: ReplyTrackingOptions): Prom
                 threadId,
                 inReplyTo,
                 matchedEmail.recipient_email,
-                matchedEmail.subject
+                matchedEmail.subject,
+                receivedAt
               ],
             );
             newRepliesFound++;
