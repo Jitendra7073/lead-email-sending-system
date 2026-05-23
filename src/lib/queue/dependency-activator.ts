@@ -62,7 +62,7 @@ export async function activateDependentEmails(
     const dependentsResult = await client.query(
       `SELECT * FROM email_queue
        WHERE depends_on_queue_id = $1
-       AND status IN ('dependency_pending', 'scheduled')
+       AND status IN ('dependency_pending', 'pending', 'scheduled')
        ORDER BY sequence_position ASC`,
       [sentEmailId]
     );
@@ -248,7 +248,7 @@ export async function cancelDependentEmails(parentEmailId: string, reason: strin
     const dependents = await executeQuery(
       `SELECT id FROM email_queue
        WHERE depends_on_queue_id = $1
-       AND status IN ('dependency_pending', 'scheduled', 'ready_to_send')`,
+       AND status IN ('dependency_pending', 'pending', 'scheduled', 'ready_to_send')`,
       [parentEmailId]
     );
 

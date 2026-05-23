@@ -152,9 +152,14 @@ export async function calculateOptimalSchedule(params: ScheduleCalculationParams
   if (gap_hours > 0) baseDate = addHours(baseDate, gap_hours);
   if (gap_minutes > 0) baseDate = addMinutes(baseDate, gap_minutes);
 
-  // Set the preferred send time
+  // Set the preferred send time in the recipient's local timezone, then store UTC.
   const { hours: sendHour, minutes: sendMinute } = parseTimeString(send_time);
-  let scheduledDate = setMinutes(setHours(baseDate, sendHour), sendMinute);
+  const baseInRecipientTz = toZonedTime(baseDate, targetTimezone);
+  const scheduledInRecipientTz = setMinutes(
+    setHours(baseInRecipientTz, sendHour),
+    sendMinute
+  );
+  let scheduledDate = fromZonedTime(scheduledInRecipientTz, targetTimezone);
 
   // Store original scheduled time
   const original_scheduled_at = scheduledDate.toISOString();

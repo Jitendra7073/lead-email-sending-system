@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dbPool } from '@/lib/db/postgres';
+import { calculateDependentSchedule, calculateOptimalSchedule } from '@/lib/schedule/schedule-calculator';
 
 interface EmailToSchedule {
   contact_id: number;
@@ -19,6 +20,20 @@ interface SequenceItem {
   send_time: string;
   subject: string;
   html_content: string;
+}
+
+interface ScheduledEmail {
+  queue_id: string;
+  contact_id: number;
+  contact_email: string;
+  template_id: string;
+  template_subject: string;
+  position: number;
+  scheduled_at: Date;
+  status: string;
+  recipient_timezone: string;
+  country_code: string;
+  adjustments: unknown[];
 }
 
 export async function POST(request: Request) {
@@ -85,7 +100,7 @@ export async function POST(request: Request) {
     }
 
     const sequence = sequenceResult.rows[0];
-    const sequenceItems: SequenceItem[] = sequence.items.filter((item: any) => item.template_id);
+    const sequenceItems: SequenceItem[] = (sequence.items as SequenceItem[]).filter((item) => item.template_id);
 
     if (sequenceItems.length === 0) {
       await client.query('ROLLBACK');
@@ -127,7 +142,7 @@ export async function POST(request: Request) {
     // Insert all emails into queue with proper delay calculation
     let queuedCount = 0;
     const now = new Date();
-    const scheduledEmails: any[] = [];
+    const scheduledEmails: ScheduledEmail[] = [];
 
     for (const [contactId, contactEmails] of emailsByContact) {
       // Sort by position to ensure proper ordering
@@ -144,35 +159,6 @@ export async function POST(request: Request) {
           }
         }
 
-        // Calculate scheduled time
-        let scheduledAt: Date;
-
-        // delay_days represents days after the FIRST email (baseTime), not after the previous email
-        const delayDays = item.delay_days || 0;
-        scheduledAt = new Date(baseTime);
-        scheduledAt.setDate(scheduledAt.getDate() + delayDays);
-
-        // Set the send_time for this email
-        const [hours, minutes] = item.send_time.split(':').map(Number);
-        scheduledAt.setHours(hours, minutes, 0, 0);
-
-        // Determine status based on timing
-        let status = 'ready_to_send';
-        let dependencySatisfied = true;
-
-        // For items after position 1, they depend on previous items being sent
-        if (item.position > 1) {
-          status = 'pending';
-          dependencySatisfied = false;
-        }
-
-        // Check if scheduled time is in the future
-        if (scheduledAt > now) {
-          if (item.position === 1) {
-            status = 'scheduled';
-          }
-        }
-
         // Get the contact email, timezone, and country code
         const contactInfo = await client.query(
           `SELECT value, timezone, country_code FROM contacts WHERE id = $1`,
@@ -186,7 +172,38 @@ export async function POST(request: Request) {
 
         const recipientEmail = contactInfo.rows[0].value;
         const recipientTimezone = contactInfo.rows[0].timezone || 'UTC';
-        const recipientCountryCode = contactInfo.rows[0].country_code || null;
+        const recipientCountryCode = contactInfo.rows[0].country_code || 'US';
+
+        const previousQueueItem = scheduledEmails
+          .filter(email => email.contact_id === contactId)
+          .sort((a, b) => b.position - a.position)[0];
+
+        const scheduleResult = item.position === 1 || !previousQueueItem
+          ? await calculateOptimalSchedule({
+              recipient_country: recipientCountryCode,
+              recipient_timezone: recipientTimezone,
+              base_time: baseTime.toISOString(),
+              send_time: item.send_time || '10:00'
+            })
+          : await calculateDependentSchedule(
+              previousQueueItem.scheduled_at.toISOString(),
+              item.delay_days || 0,
+              {
+                recipient_country: recipientCountryCode,
+                recipient_timezone: recipientTimezone,
+                send_time: item.send_time || '10:00'
+              }
+            );
+
+        const scheduledAt = new Date(scheduleResult.adjusted_scheduled_at);
+
+        let status = scheduledAt > now ? 'scheduled' : 'ready_to_send';
+        let dependencySatisfied = true;
+
+        if (item.position > 1) {
+          status = 'pending';
+          dependencySatisfied = false;
+        }
 
         // Insert into queue
         const queueResult = await client.query(
@@ -205,13 +222,13 @@ export async function POST(request: Request) {
             item.html_content,
             item.template_id,
             scheduledAt,
-            scheduledAt, // adjusted_scheduled_at should be the scheduled time, not current time
+            scheduledAt,
             status,
             item.position,
             recipientTimezone,
-            recipientCountryCode, // country_code from contact record
+            recipientCountryCode,
             dependencySatisfied,
-            null // depends_on_queue_id - will be set after first email is queued
+            previousQueueItem?.queue_id || null
           ]
         );
 
@@ -224,19 +241,13 @@ export async function POST(request: Request) {
           template_subject: item.subject,
           position: item.position,
           scheduled_at: scheduledAt,
-          status: status
+          status: status,
+          recipient_timezone: recipientTimezone,
+          country_code: recipientCountryCode,
+          adjustments: scheduleResult.adjustments
         });
 
         queuedCount++;
-
-        // If this is not the first email, update its dependency
-        if (item.position > 1 && scheduledEmails.length > 1) {
-          const previousQueueId = scheduledEmails[scheduledEmails.length - 2].queue_id;
-          await client.query(
-            `UPDATE email_queue SET depends_on_queue_id = $1 WHERE id = $2`,
-            [previousQueueId, queueId]
-          );
-        }
       }
     }
 
@@ -253,12 +264,13 @@ export async function POST(request: Request) {
         scheduled_emails: scheduledEmails
       }
     });
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown scheduling error';
     await client.query('ROLLBACK');
     console.error('Error scheduling sequence:', error);
     return NextResponse.json({
       success: false,
-      error: error.message
+      error: message
     }, { status: 500 });
   } finally {
     client.release();
