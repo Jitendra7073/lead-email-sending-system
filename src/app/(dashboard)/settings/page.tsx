@@ -19,7 +19,7 @@ interface AppSettings {
   apify_max_retries: string;
   apify_batch_size: string;
   apify_recheck_days: string;
-  
+
   // Gmail Settings
   GMAIL_CLIENT_ID: string;
   GMAIL_CLIENT_SECRET: string;
@@ -52,9 +52,9 @@ export default function SettingsPage() {
   const [expandedSections, setExpandedSections] = useState<string[]>(["apify", "email"]);
 
   const toggleSection = (section: string) => {
-    setExpandedSections(prev => 
-      prev.includes(section) 
-        ? prev.filter(s => s !== section) 
+    setExpandedSections(prev =>
+      prev.includes(section)
+        ? prev.filter(s => s !== section)
         : [...prev, section]
     );
   };
@@ -168,7 +168,7 @@ export default function SettingsPage() {
 
       <div className="space-y-4">
         {/* Apify Settings */}
-        <AccordionItem 
+        <AccordionItem
           title="Apify settings"
           icon={
             <div className="p-2 rounded-md bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">
@@ -292,7 +292,7 @@ export default function SettingsPage() {
         </AccordionItem>
 
         {/* Email Settings */}
-        <AccordionItem 
+        <AccordionItem
           title="Email settings"
           icon={
             <div className="p-2 rounded-md bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
@@ -394,11 +394,11 @@ export default function SettingsPage() {
 
       {/* Save Button */}
       <div className="mt-8 flex justify-end">
-        <Button 
-          onClick={saveSettings} 
-          disabled={saving} 
+        <Button
+          onClick={saveSettings}
+          disabled={saving}
           size="lg"
-          className="min-w-[150px] font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02]"
+          className="min-w-37.5 font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.02]"
         >
           {saving ? (
             <>

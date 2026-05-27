@@ -141,6 +141,31 @@ interface QueuedEmail {
   reason?: string;
 }
 
+interface ContactsResponse {
+  success: boolean;
+  data?: Contact[];
+  meta?: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+  stats?: {
+    email: number;
+    phone: number;
+    linkedin: number;
+    total: number;
+  };
+  error?: string;
+}
+
+interface VerificationResult {
+  contact_id: number;
+  status: Contact["verification_status"];
+  reason?: string | null;
+  checked_at?: string | null;
+}
+
 type ContactType = "all" | "email" | "phone" | "linkedin";
 type DeliveryOption = "immediate" | "next_business_hours" | "custom";
 
@@ -180,6 +205,14 @@ export default function ContactsPage() {
   });
   const [availableCountries, setAvailableCountries] = React.useState<string[]>([]);
   const [availableSites, setAvailableSites] = React.useState<Array<{ url: string; count: number }>>([]);
+
+  const getErrorMessage = React.useCallback((error: unknown) => {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    return String(error);
+  }, []);
 
   // Removed deprecated filter state - now using unified filters state
 
@@ -302,24 +335,26 @@ export default function ContactsPage() {
       const res = await fetch(
         `/api/contacts?page=${page}&limit=20${typeParam}${searchParam}${filterString}`,
       );
-      const json = await res.json();
+      const json = (await res.json()) as ContactsResponse;
       if (json.success) {
         // Deduplicate contacts by ID to prevent React key errors
         const uniqueContacts = Array.from(
           new Map(
-            json.data.map((contact: any) => [contact.id, contact]),
+            (json.data || []).map((contact) => [contact.id, contact]),
           ).values(),
         ) as Contact[];
         setContacts(uniqueContacts);
-        setMeta(json.meta);
+        if (json.meta) {
+          setMeta(json.meta);
+        }
         if (json.stats) {
           setStats(json.stats);
         }
       } else {
-        setError(json.error);
+        setError(json.error || "Failed to fetch contacts");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -647,8 +682,8 @@ export default function ContactsPage() {
 
       setQueuedEmails(emails);
       setScheduleWarnings(warnings);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setWizardLoading(false);
     }
@@ -745,8 +780,8 @@ export default function ContactsPage() {
           alert(json.error || "Failed to queue emails");
         }
       }
-    } catch (err: any) {
-      alert("Error: " + err.message);
+    } catch (err: unknown) {
+      alert("Error: " + getErrorMessage(err));
     } finally {
       setWizardLoading(false);
     }
@@ -766,8 +801,8 @@ export default function ContactsPage() {
         setSequenceError(json.error || "Failed to fetch sequences");
         if (showModal) setShowSequenceModal(true);
       }
-    } catch (err: any) {
-      setSequenceError(err.message);
+    } catch (err: unknown) {
+      setSequenceError(getErrorMessage(err));
       if (showModal) setShowSequenceModal(true);
     } finally {
       setSequencesLoading(false);
@@ -816,8 +851,8 @@ export default function ContactsPage() {
         // Just clear selection
         setSelectedIds(new Set());
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setBulkActionLoading(null);
     }
@@ -832,7 +867,7 @@ export default function ContactsPage() {
     setContacts((prev) =>
       prev.map((c) =>
         selectedIds.has(c.id) && c.type === "email"
-          ? { ...c, verification_status: "checking" as any }
+          ? { ...c, verification_status: "checking" }
           : c,
       ),
     );
@@ -857,7 +892,7 @@ export default function ContactsPage() {
         // Update each contact with its verification status
         setContacts((prev) =>
           prev.map((c) => {
-            const result = json.results.find((r: any) => r.contact_id === c.id);
+            const result = (json.results as VerificationResult[] | undefined)?.find((r) => r.contact_id === c.id);
             return result
               ? {
                 ...c,
@@ -884,8 +919,8 @@ export default function ContactsPage() {
           ),
         );
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
       // Reset checking status on error
       setContacts((prev) =>
         prev.map((c) =>
@@ -932,8 +967,8 @@ export default function ContactsPage() {
       } else {
         setError(json.error || "Failed to add contacts to queue");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setBulkActionLoading(null);
     }
@@ -989,8 +1024,8 @@ export default function ContactsPage() {
       } else {
         setError(json.error || "Failed to send emails");
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setBulkActionLoading(null);
     }
@@ -1005,8 +1040,8 @@ export default function ContactsPage() {
       if (json.success) {
         fetchContacts(meta.page, activeTab);
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     }
   };
 
@@ -1036,8 +1071,8 @@ export default function ContactsPage() {
       } else {
         setError(json.error);
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
     } finally {
       setUpdateLoading(false);
     }
@@ -1076,8 +1111,8 @@ export default function ContactsPage() {
       } else {
         setAddError(json.error || "Failed to resolve site");
       }
-    } catch (err: any) {
-      setAddError(err.message);
+    } catch (err: unknown) {
+      setAddError(getErrorMessage(err));
     } finally {
       setAddLoading(false);
     }
@@ -1110,8 +1145,8 @@ export default function ContactsPage() {
       } else {
         setAddError(json.error || "Failed to add contact");
       }
-    } catch (err: any) {
-      setAddError(err.message);
+    } catch (err: unknown) {
+      setAddError(getErrorMessage(err));
     } finally {
       setAddLoading(false);
     }
@@ -1180,9 +1215,9 @@ export default function ContactsPage() {
               failed++;
               errors.push(`Line ${idx + 1} (${value}): ${json.error}`);
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             failed++;
-            errors.push(`Line ${idx + 1} (${value}): ${err.message}`);
+            errors.push(`Line ${idx + 1} (${value}): ${getErrorMessage(err)}`);
           }
         }),
       );
@@ -1220,8 +1255,8 @@ export default function ContactsPage() {
       } else {
         setBulkResult({ imported: 0, failed: 0, errors: [json.error || "Failed to resolve site"] });
       }
-    } catch (err: any) {
-      setBulkResult({ imported: 0, failed: 0, errors: [err.message] });
+    } catch (err: unknown) {
+      setBulkResult({ imported: 0, failed: 0, errors: [getErrorMessage(err)] });
     } finally {
       setBulkLoading(false);
     }
@@ -1373,7 +1408,7 @@ export default function ContactsPage() {
               </div>
 
               {/* Advanced Filters Toggle */}
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 {hiddenByFilters > 0 && (
                   <span className="text-xs text-muted-foreground">
                     {hiddenByFilters} hidden
@@ -1474,7 +1509,7 @@ export default function ContactsPage() {
                 <Label className="text-xs">Verification Status</Label>
                 <Select
                   value={filters.verification_status}
-                  onValueChange={(v) => setFilters({ ...filters, verification_status: v === " " ? "" : v as any })}>
+                  onValueChange={(v) => setFilters({ ...filters, verification_status: v === " " ? "" : (v as typeof filters.verification_status) })}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="All statuses" />
                   </SelectTrigger>
@@ -1533,7 +1568,7 @@ export default function ContactsPage() {
                 <Label className="text-xs">Has Site Link</Label>
                 <Select
                   value={filters.has_site_id}
-                  onValueChange={(v) => setFilters({ ...filters, has_site_id: v === " " ? "" : v as any })}>
+                  onValueChange={(v) => setFilters({ ...filters, has_site_id: v === " " ? "" : (v as typeof filters.has_site_id) })}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="All contacts" />
                   </SelectTrigger>
@@ -1607,7 +1642,7 @@ export default function ContactsPage() {
           <Tabs
             value={activeTab}
             onValueChange={(v) => setActiveTab(v as ContactType)}>
-            <div className="mx-4 sm:mx-6 mt-4 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <div className="mx-4 mt-4 overflow-x-auto px-4 sm:px-0">
               <TabsList className="w-full sm:w-auto inline-flex min-w-max">
                 <TabsTrigger value="all">All</TabsTrigger>
                 <TabsTrigger value="email">
@@ -1630,7 +1665,7 @@ export default function ContactsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[50px] sticky left-0 bg-background">
+                    <TableHead className="w-12.5 sticky left-0 bg-background">
                       <Checkbox
                         checked={
                           displayContacts.length > 0 &&
@@ -1707,7 +1742,7 @@ export default function ContactsPage() {
                             <span className="break-all">{contact.value}</span>
                             {/* Duplicate badge */}
                             {duplicateIds.has(contact.id) && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 flex-shrink-0">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/25 shrink-0">
                                 <Copy className="h-2.5 w-2.5" />
                                 Duplicate
                               </span>
@@ -1739,7 +1774,7 @@ export default function ContactsPage() {
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="hidden md:table-cell max-w-[200px] truncate text-muted-foreground text-xs">
+                        <TableCell className="hidden md:table-cell max-w-50 truncate text-muted-foreground text-xs">
                           {contact.site_url || "N/A"}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">
@@ -2102,7 +2137,7 @@ export default function ContactsPage() {
                   )}
 
                   {/* Filtered Sequences */}
-                  <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                  <div className="space-y-3 max-h-100 overflow-y-auto">
                     {sequences
                       .filter((seq) => {
                         // First filter by search query
@@ -2276,7 +2311,7 @@ export default function ContactsPage() {
                 <h4 className="text-sm font-medium">
                   Scheduled Emails (click date/time to edit)
                 </h4>
-                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                <div className="space-y-2 max-h-100 overflow-y-auto">
                   {queuedEmails.map((email, idx) => {
                     const scheduleDate = new Date(email.scheduled_at);
                     const now = new Date();
@@ -2952,7 +2987,7 @@ export default function ContactsPage() {
                       <div className="space-y-2">
                         <Label>Paste Contacts</Label>
                         <textarea
-                          className="w-full min-h-[140px] rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-y font-mono"
+                          className="w-full min-h-35 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-y font-mono"
                           placeholder={bulkType === "email" ? "alice@example.com\nbob@example.com" : bulkType === "phone" ? "+1 555 000 0001\n+1 555 000 0002" : "https://linkedin.com/in/alice"}
                           value={bulkText}
                           onChange={(e) => setBulkText(e.target.value)}

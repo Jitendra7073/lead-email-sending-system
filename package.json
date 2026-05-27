@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "worker": "node scripts/queue-worker.mjs",
+    "worker": "tsx scripts/bullmq-worker.ts",
+    "worker:legacy": "node scripts/queue-worker.mjs",
     "lint": "eslint",
     "test:webhooks": "tsx test-webhooks.ts"
   },
@@ -43,12 +44,14 @@
     "apify": "^3.7.0",
     "better-sqlite3": "^12.8.0",
     "bottleneck": "^2.19.5",
+    "bullmq": "^5.58.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.4.2",
     "googleapis": "^171.4.0",
+    "ioredis": "^5.4.1",
     "jose": "^6.2.2",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.7.0",
@@ -61,7 +64,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "redis": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -73,6 +77,7 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "tsx": "^4.19.4",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

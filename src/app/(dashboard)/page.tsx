@@ -81,8 +81,8 @@ export default function Dashboard() {
         } else {
           setError(json.error || "Failed to fetch stats");
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
       }
@@ -146,21 +146,21 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Contacts"
-          value={formatNumber(data?.contacts.total_contacts || 0)}
+          value={data?.contacts.total_contacts || 0}
           description="All prospects in database"
           icon={Users}
           color="text-blue-500"
         />
         <StatCard
           title="Emails Sent"
-          value={formatNumber(overall?.total_sent || 0)}
+          value={overall?.total_sent || 0}
           description="Lifetime emails delivered"
           icon={Send}
           color="text-emerald-500"
         />
         <StatCard
           title="Sent Today"
-          value={formatNumber(today?.sent_today || 0)}
+          value={today?.sent_today || 0}
           description={`${formatNumber(senders?.total_daily_capacity || 0)} daily limit`}
           icon={TrendingUp}
           color="text-purple-500"
@@ -170,7 +170,7 @@ export default function Dashboard() {
         />
         <StatCard
           title="Sent This Week"
-          value={formatNumber(weekly?.sent_week || 0)}
+          value={weekly?.sent_week || 0}
           description="Mon–Sun this week"
           icon={Calendar}
           color="text-orange-500"
@@ -236,7 +236,14 @@ function StatCard({
   icon: Icon,
   color = "",
   progress,
-}: any) {
+}: {
+  title: string;
+  value: number;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  color?: string;
+  progress?: number;
+}) {
   return (
     <Card className="overflow-hidden relative">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -244,7 +251,7 @@ function StatCard({
         <Icon className={cn("h-4 w-4 text-muted-foreground", color)} />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+        <div className="text-2xl font-bold">{formatNumber(value)}</div>
         <p className="text-xs text-muted-foreground mt-1">{description}</p>
 
         {progress !== undefined && (
@@ -260,10 +267,20 @@ function StatCard({
   );
 }
 
-function Step({ number, title, description, icon: Icon }: any) {
+function Step({
+  number,
+  title,
+  description,
+  icon: Icon,
+}: {
+  number: string | number;
+  title: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+}) {
   return (
     <div className="flex gap-4">
-      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">
+      <div className="shrink-0 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">
         {number}
       </div>
       <div className="flex-1">

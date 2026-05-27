@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 import { verifySession } from '@/lib/auth/simple-auth';
 
 // Routes that don't require authentication
-const publicRoutes = ['/login', '/api/auth/login', '/api/workers/process-queue'];
+const publicRoutes = ['/login', '/api/auth/login'];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
