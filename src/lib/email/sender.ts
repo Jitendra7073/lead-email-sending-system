@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { supabaseAdmin } from '../supabase/client';
+import { getSupabaseAdmin } from '../supabase/client';
 import { v4 as uuidv4 } from 'uuid';
 import { executeQuery } from '../db/postgres';
 import { replaceVariables, VariableContext } from '../email-variables';
@@ -26,7 +26,7 @@ export async function sendEmailWithNodemailer(
   aliasOptions?: AliasOptions
 ) {
   // 1. Fetch sender credentials with alias information if provided
-  const { data: senders, error } = await supabaseAdmin
+  const { data: senders, error } = await getSupabaseAdmin()
     .from('email_senders')
     .select('*')
     .eq('id', senderId)

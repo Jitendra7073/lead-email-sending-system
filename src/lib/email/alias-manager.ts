@@ -9,7 +9,7 @@
  */
 
 import { executeQuery } from '../db/postgres';
-import { supabaseAdmin } from '../supabase/client';
+import { getSupabaseAdmin } from '../supabase/client';
 
 export interface Alias {
   id: string;
@@ -124,7 +124,7 @@ export async function validateAliasForSender(
 export async function getSenderWithAliases(senderId: string): Promise<SenderWithAliases | null> {
   try {
     // Get sender
-    const { data: senders, error } = await supabaseAdmin
+    const { data: senders, error } = await getSupabaseAdmin()
       .from('email_senders')
       .select('*')
       .eq('id', senderId)
@@ -164,7 +164,7 @@ export async function addAlias(
 ): Promise<Alias> {
   try {
     // Check if sender exists
-    const { data: senders, error: senderError } = await supabaseAdmin
+    const { data: senders, error: senderError } = await getSupabaseAdmin()
       .from('email_senders')
       .select('*')
       .eq('id', senderId)

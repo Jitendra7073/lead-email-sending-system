@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '../supabase/client';
+import { getSupabaseAdmin } from '../supabase/client';
 import { createQueueEntryWithValidation, generateIdempotencyKey, QueueEntryParams } from '@/lib/queue/queue-creator';
 
 /**
@@ -12,7 +12,7 @@ export async function isDependencyMet(parentQueueId: string | null): Promise<boo
   if (!parentQueueId) return true; // No dependency, it's the first email in the chain
 
   // Use .limit(1) instead of .single() to handle potential duplicates gracefully
-  const { data: parentRecords, error } = await supabaseAdmin
+  const { data: parentRecords, error } = await getSupabaseAdmin()
     .from('email_queue')
     .select('status')
     .eq('id', parentQueueId)
@@ -36,7 +36,7 @@ export async function isDependencyMet(parentQueueId: string | null): Promise<boo
  * @param failedQueueId The queue ID of the email that just failed
  */
 export async function cancelDownstreamDependencies(failedQueueId: string): Promise<void> {
-  const { error } = await supabaseAdmin
+  const { error } = await getSupabaseAdmin()
     .from('email_queue')
     .update({
       status: 'cancelled',
@@ -131,7 +131,7 @@ export async function buildDependencyChain(
         }
 
         // Insert into database
-        const { error: insertError } = await supabaseAdmin
+        const { error: insertError } = await getSupabaseAdmin()
           .from('email_queue')
           .insert(result.queue_item);
 

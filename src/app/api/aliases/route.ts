@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { executeQuery } from '@/lib/db/postgres';
-import { supabaseAdmin } from '@/lib/supabase/client';
+import { getSupabaseAdmin } from '@/lib/supabase/client';
 
 /**
  * GET /api/aliases
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     // Check if sender exists
-    const { data: senders, error: senderError } = await supabaseAdmin
+    const { data: senders, error: senderError } = await getSupabaseAdmin()
       .from('email_senders')
       .select('*')
       .eq('id', sender_id)
