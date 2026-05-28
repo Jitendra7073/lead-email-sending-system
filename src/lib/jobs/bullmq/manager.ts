@@ -1,4 +1,4 @@
-import { closeBullRedisConnection, isBullRedisOpen } from './connection';
+import { closeBullRedisConnection, getBullRedisConnection } from './connection';
 import { getBullMqRuntimeConfig } from './config';
 import {
     addRunNowJob,
@@ -109,11 +109,20 @@ export async function resumeProcessing() {
 export async function getBullMqStatus() {
     const status = await getProcessingQueueStatus();
     const config = getBullMqRuntimeConfig();
+    let redisOpen = false;
+
+    try {
+        const redis = getBullRedisConnection();
+        await redis.ping();
+        redisOpen = redis.status === 'ready' || redis.status === 'connect';
+    } catch {
+        redisOpen = false;
+    }
 
     return {
         success: true,
         action: 'status',
-        redisOpen: isBullRedisOpen(),
+        redisOpen,
         config: {
             queueName: status.queueName,
             appUrl: config.appUrl,
