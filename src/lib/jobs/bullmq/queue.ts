@@ -95,6 +95,8 @@ export async function upsertProcessingTimer(intervalMs?: number) {
     const config = getBullMqRuntimeConfig();
     const effectiveInterval = intervalMs && intervalMs > 0 ? intervalMs : config.processIntervalMs;
 
+    await removeProcessingTimer();
+
     return queue.add(
         BULLMQ_PROCESS_JOB_NAME,
         {

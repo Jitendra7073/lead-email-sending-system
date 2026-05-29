@@ -41,6 +41,8 @@ async function processDueQueueJob(): Promise<Record<string, unknown>> {
         body: JSON.stringify({
             source: 'bullmq-worker',
             batchSize: 20,
+            drainDue: true,
+            maxBatches: 5,
         }),
     });
 
