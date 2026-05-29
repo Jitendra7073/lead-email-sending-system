@@ -10,6 +10,14 @@ const config = getBullMqRuntimeConfig();
 const AUTO_SCHEDULE_ON_START = (process.env.BULLMQ_AUTO_SCHEDULE_ON_START || 'true').toLowerCase() === 'true';
 let healthServer: Server | null = null;
 
+process.on('unhandledRejection', (error) => {
+    console.error('[bullmq-worker] unhandled rejection:', error instanceof Error ? error.message : String(error));
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('[bullmq-worker] uncaught exception:', error.message);
+});
+
 function startHealthServer() {
     const port = Number.parseInt(process.env.PORT || '', 10);
 

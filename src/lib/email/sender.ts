@@ -81,6 +81,9 @@ export async function sendEmailWithNodemailer(
     host: sender.smtp_host || 'smtp.gmail.com',
     port: sender.smtp_port || 587,
     secure: sender.smtp_port === 465, // true for 465, false for other ports
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
     auth: {
       user: sender.smtp_user || sender.email, // Always use main email for auth
       pass: sender.app_password || sender.password,

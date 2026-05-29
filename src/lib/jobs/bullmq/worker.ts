@@ -27,6 +27,8 @@ function getBullMqConnectionOptions() {
 async function processDueQueueJob(): Promise<Record<string, unknown>> {
     const config = getBullMqRuntimeConfig();
     const url = `${config.appUrl}/api/workers/process-due-queue`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
     const headers: Record<string, string> = {
         'content-type': 'application/json',
     };
@@ -35,29 +37,50 @@ async function processDueQueueJob(): Promise<Record<string, unknown>> {
         headers.authorization = `Bearer ${config.workerSecret}`;
     }
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-            source: 'bullmq-worker',
-            batchSize: 20,
-            drainDue: true,
-            maxBatches: 5,
-        }),
-    });
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            signal: controller.signal,
+            body: JSON.stringify({
+                source: 'bullmq-worker',
+                batchSize: 20,
+                drainDue: true,
+                maxBatches: 5,
+            }),
+        });
 
-    const payload = await response.json().catch(() => null);
+        const payload = await response.json().catch(() => null);
 
-    if (!response.ok) {
-        const message = payload?.error || `Worker trigger failed with status ${response.status}`;
-        throw new Error(message);
+        if (!response.ok) {
+            const message = payload?.error || `Worker trigger failed with status ${response.status}`;
+            console.error(`[bullmq-worker] trigger endpoint failed: ${message}`);
+
+            return {
+                success: false,
+                endpoint: url,
+                status: response.status,
+                error: message,
+            };
+        }
+
+        return {
+            success: true,
+            endpoint: url,
+            ...(payload || {}),
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[bullmq-worker] trigger request failed: ${message}`);
+
+        return {
+            success: false,
+            endpoint: url,
+            error: message,
+        };
+    } finally {
+        clearTimeout(timeout);
     }
-
-    return {
-        success: true,
-        endpoint: url,
-        ...(payload || {}),
-    };
 }
 
 /**
