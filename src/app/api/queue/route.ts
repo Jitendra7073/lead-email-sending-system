@@ -10,21 +10,27 @@ export async function GET(request: Request) {
     const offset = parseInt(searchParams.get('offset') || '0');
 
     // Build WHERE clause conditions
-    const conditions: string[] = [];
+    const queueConditions: string[] = [];
+    const logConditions: string[] = [];
     const params: any[] = [];
     let paramIndex = 1;
 
     if (status) {
-      conditions.push(`q.status = $${paramIndex++}`);
+      queueConditions.push(`q.status = $${paramIndex}`);
+      logConditions.push(`l.status = $${paramIndex}`);
       params.push(status);
+      paramIndex++;
     }
 
     if (campaign_id) {
-      conditions.push(`q.campaign_id = $${paramIndex++}`);
+      queueConditions.push(`q.campaign_id = $${paramIndex}`);
+      logConditions.push(`l.campaign_id = $${paramIndex}`);
       params.push(campaign_id);
+      paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const queueWhereClause = queueConditions.length > 0 ? `WHERE ${queueConditions.join(' AND ')}` : '';
+    const logWhereClause = logConditions.length > 0 ? `WHERE ${logConditions.join(' AND ')}` : '';
 
     // Get data from email_queue (for pending/queued emails)
     const queueQuery = `
@@ -52,7 +58,7 @@ export async function GET(request: Request) {
         'queue' as source
       FROM email_queue q
       LEFT JOIN email_campaigns c ON q.campaign_id = c.id
-      ${whereClause}
+      ${queueWhereClause}
     `;
 
     // Get data from email_send_log (for sent emails)
@@ -72,7 +78,7 @@ export async function GET(request: Request) {
       FROM email_send_log l
       LEFT JOIN email_campaigns c ON l.campaign_id = c.id
       LEFT JOIN email_templates t ON l.template_id = t.id
-      ${whereClause}
+      ${logWhereClause}
     `;
 
     const [queueData, logData] = await Promise.all([
@@ -139,14 +145,14 @@ export async function GET(request: Request) {
     const paginatedData = combinedData.slice(offset, offset + limit);
 
     // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM email_queue ${whereClause ? 'WHERE ' + conditions.join(' AND ') : ''}`;
+    let countQuery = `SELECT COUNT(*) as total FROM email_queue q ${queueWhereClause}`;
     let countParams: any[] = [...params];
 
     const countData = await executeQuery(countQuery, countParams);
     let total = parseInt(countData[0]?.total || '0');
 
     // Add log count to total
-    const logCountQuery = `SELECT COUNT(*) as total FROM email_send_log ${whereClause ? 'WHERE ' + conditions.join(' AND ') : ''}`;
+    const logCountQuery = `SELECT COUNT(*) as total FROM email_send_log l ${logWhereClause}`;
     const logCountData = await executeQuery(logCountQuery, [...params]);
     total += parseInt(logCountData[0]?.total || '0');
 

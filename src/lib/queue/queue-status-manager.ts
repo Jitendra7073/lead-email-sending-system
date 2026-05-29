@@ -78,49 +78,53 @@ export async function markAsSent(
     sent_from?: string;
   }
 ): Promise<void> {
+  const updateResult = await dbPool.query(
+    `UPDATE email_queue
+     SET status = 'sent',
+         message_id = $2,
+         sent_at = NOW(),
+         error_message = NULL,
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING id`,
+    [queueId, messageId]
+  );
+
+  if (updateResult.rowCount === 0) {
+    throw new Error(`Email ${queueId} not found while marking as sent`);
+  }
+
   try {
     await executeQuery(
-      `UPDATE email_queue
-       SET status = 'sent',
-           message_id = $2,
-           sent_at = NOW(),
-           error_message = NULL,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [queueId, messageId]
-    );
-
-    // Log the send event
-    await executeQuery(
       `INSERT INTO email_send_log (
-        queue_id,
         contact_id,
         contact_email,
         campaign_id,
+        template_id,
         send_type,
         status,
-        message_id,
-        provider,
         sent_at,
         created_at
       ) SELECT
-        $1,
         contact_id,
         recipient_email,
         campaign_id,
-        'sequence_pos_' || sequence_position,
+        template_id,
+        COALESCE('sequence_pos_' || sequence_position, 'queue'),
         'sent',
-        $2,
-        $3,
         NOW(),
         NOW()
       FROM email_queue
       WHERE id = $1`,
-      [queueId, messageId, metadata?.provider || 'unknown']
+      [queueId]
     );
   } catch (error) {
-    console.error('Error marking as sent:', error);
-    throw error;
+    console.error('Email was marked as sent, but send-log insert failed:', {
+      queueId,
+      provider: metadata?.provider,
+      sentFrom: metadata?.sent_from,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
