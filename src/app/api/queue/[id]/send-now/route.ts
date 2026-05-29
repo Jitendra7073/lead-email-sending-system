@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { executeQuery } from "@/lib/db/postgres";
-import { sendEmailWithResend } from "@/lib/email/resend-sender";
+import { sendEmailWithNodemailer } from "@/lib/email/sender";
 import { getCountryName } from "@/lib/email-variables";
 
 interface RouteContext {
@@ -88,7 +88,7 @@ export async function POST(request: Request, context: RouteContext) {
       const countryCodeInput = item.country_code || item.site_country;
       const countryName = countryCodeInput ? await getCountryName(countryCodeInput) : "";
 
-      const info = await sendEmailWithResend(
+      const info = await sendEmailWithNodemailer(
         senderCredentials.id || item.sender_id,
         item.recipient_email,
         item.subject,
@@ -106,8 +106,8 @@ export async function POST(request: Request, context: RouteContext) {
       // 5. Mark as sent (Centralized update)
       const { markAsSent } = await import('@/lib/queue/queue-status-manager');
       await markAsSent(id, info.messageId, {
-        provider: 'resend',
-        sent_from: senderCredentials.email || info.fromEmail
+        provider: senderCredentials.service || 'nodemailer',
+        sent_from: senderCredentials.email
       });
 
       // 7. Increment sender today count
