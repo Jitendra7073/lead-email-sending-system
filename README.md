@@ -278,6 +278,11 @@ The Vercel endpoint runs the existing queue processor, sends due emails, updates
 queue status, and activates follow-up dependencies. Set the same `WORKER_SECRET`
 on both Vercel and the worker host.
 
+If the worker is deployed as a Render Free Web Service instead of a Background
+Worker, `scripts/bullmq-worker.ts` also starts a small health server on
+`process.env.PORT`. Render can use `/health` for port detection while the same
+process continues running the BullMQ trigger.
+
 ### Architecture
 
 ```
