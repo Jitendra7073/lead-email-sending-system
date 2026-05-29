@@ -5,6 +5,7 @@ export const BULLMQ_REPEAT_KEY = 'email-processing-repeat';
 export interface BullMqRuntimeConfig {
     redisUrl: string;
     appUrl: string;
+    workerSecret?: string;
     processIntervalMs: number;
     workerConcurrency: number;
 }
@@ -20,6 +21,7 @@ export function getBullMqRuntimeConfig(): BullMqRuntimeConfig {
     return {
         redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
         appUrl,
+        workerSecret: process.env.WORKER_SECRET,
         processIntervalMs: Number.isFinite(processIntervalMs) && processIntervalMs > 0 ? processIntervalMs : 60000,
         workerConcurrency: Number.isFinite(workerConcurrency) && workerConcurrency > 0 ? workerConcurrency : 1,
     };
