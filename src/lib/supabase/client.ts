@@ -3,27 +3,23 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 let supabaseAdminClient: SupabaseClient | null = null;
 
 function resolveSupabaseCredentials() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  const supabaseUrl = process.env.DATABASE_URL || "";
   // Using service key for backend admin operations (bypassing RLS entirely for our secure workers)
-  const supabaseServiceKey =
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "";
-
-  if (!supabaseUrl || !supabaseServiceKey) {
+ 
+  if (!supabaseUrl) {
     throw new Error(
-      "Supabase credentials are missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_SERVICE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY)."
+      "Supabase credentials are missing. Set DATABASE_URL."
     );
   }
 
-  return { supabaseUrl, supabaseServiceKey };
+  return { supabaseUrl };
 }
 
 export function getSupabaseAdmin() {
   if (!supabaseAdminClient) {
-    const { supabaseUrl, supabaseServiceKey } = resolveSupabaseCredentials();
+    const { supabaseUrl } = resolveSupabaseCredentials();
 
-    supabaseAdminClient = createClient(supabaseUrl, supabaseServiceKey, {
+    supabaseAdminClient = createClient(supabaseUrl, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,

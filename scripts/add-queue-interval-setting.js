@@ -3,7 +3,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 require("dotenv").config();
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = process.env.DATABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
