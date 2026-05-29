@@ -1,6 +1,6 @@
 import { dbPool } from "@/lib/db/postgres";
 import { getCountryName } from "@/lib/email-variables";
-import { sendEmailWithNodemailer } from "@/lib/email/sender";
+import { sendEmailWithResend } from "@/lib/email/resend-sender";
 import { activateDependentEmails } from "@/lib/queue/dependency-activator";
 import { markAsFailed, markAsSent } from "@/lib/queue/queue-status-manager";
 
@@ -127,7 +127,7 @@ export async function processDueQueue(
         ? await getCountryName(countryCodeInput)
         : "";
 
-      const info = await sendEmailWithNodemailer(
+      const info = await sendEmailWithResend(
         sender.id,
         item.recipient_email,
         item.subject,
@@ -143,8 +143,8 @@ export async function processDueQueue(
       );
 
       await markAsSent(item.id, info.messageId, {
-        provider: sender.service || "nodemailer",
-        sent_from: sender.email,
+        provider: "resend",
+        sent_from: info.fromEmail,
       });
 
       await dbPool.query(
